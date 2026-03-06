@@ -5,5 +5,11 @@ matplotlib
 seaborn
 jupyter
 
-# Machine Learning
+# Machine Learning / LLM
 scikit-learn
+transformers
+peft
+bitsandbytes
+
+# Data I/O
+ujson

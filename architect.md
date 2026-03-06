@@ -26,6 +26,18 @@ Logical Inference: The LLM processes the prompt, looking for physical contradict
 Actionable Decision: The model outputs a structured response: [Reasoning] -> [Decision] -> [Confidence].
 Evaluation: Results are validated against the groundtruth.json to measure Precision, Recall, and the robustness of the reasoning chain.
 
+4. Folder Structure
+/data:
+    /processed: Balanced datasets (for training).
+    /raw: VeReMi original JSON scenarios (for evaluation).
+/models: LoRA adapters and model configs.
+/src:
+    /data: JSON parsing, Type 2 vs Type 3 matching, ground truth correlation.
+    /training: LoRA fine-tuning (PEFT/HuggingFace).
+    /agent: Reasoning Agent (sliding window memory, CoT inference).
+/notebooks: Data EDA (100 scenarios) and LLM reasoning evaluation.
+/tests: Scenario-based tests (agent processes folder of JSONs sequentially).
+
 5. Technical Stack
     Data Source: VeReMi Original Dataset (JSON).
     Fine-tuning Technique: LoRA (Low-Rank Adaptation) for parameter-efficient learning.
