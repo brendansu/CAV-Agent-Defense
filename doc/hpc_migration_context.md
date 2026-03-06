@@ -89,9 +89,44 @@ Full 数据集配置在 `configs/qwen2.5_1.5b_phase1_binary.yaml`，将 `jsonl_d
 
 ---
 
-## 9. 相关文档
+## 9. 数据上传与输出检查（Palmetto）
+
+### 9.1 如何上传数据到 HPC
+
+- **JSONL 建议放在 home**（`$HOME/veremi_agent/data/processed/jsonl/`），避免 scratch 30 天 purge。
+- **从本机上传**（在**本机** PowerShell，仓库根目录或 `data/processed/jsonl` 的父目录执行）：
+  ```powershell
+  # 上传整个 phase1_binary_debug 目录（替换 haotias 为你的 Palmetto 用户名）
+  scp -r data/processed/jsonl/phase1_binary_debug haotias@slogin.palmetto.clemson.edu:$HOME/veremi_agent/data/processed/jsonl/
+  ```
+  若 HPC 上还没有 `data/processed/jsonl`，先 SSH 登录后执行：
+  ```bash
+  mkdir -p $HOME/veremi_agent/data/processed/jsonl
+  ```
+  然后再从本机执行上面的 `scp`。
+- **数据量很大时**：用 Globus 或连接 Palmetto 的 Data Transfer Node (DTN) 做 scp，不要用登录节点传大量数据；详见 [Palmetto Data Transfer](https://docs.rcd.clemson.edu/palmetto/transfer/overview/)。
+
+### 9.2 如何检查输出文件夹
+
+- **训练输出** 使用 HPC 配置时在 **scratch**，例如：`/scratch/<用户名>/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug`。
+- 在 Palmetto 终端检查：
+  ```bash
+  ls -la /scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug/
+  ls -la /scratch/$USER/veremi_agent/slurm/   # 作业日志
+  ```
+- 若目录不存在，说明训练尚未写入或作业未跑到 save；可先创建目录再提交作业：
+  ```bash
+  mkdir -p /scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug
+  mkdir -p /scratch/$USER/veremi_agent/slurm
+  ```
+- **注意**：scratch 有 30 天未访问 purge 政策；重要 checkpoint 需定期拷回 home 或备份。
+
+---
+
+## 10. 相关文档
 
 - 更完整的数据 pipeline、训练说明与截断排查过程：`doc/training_notes.md`
 - 本文件：`doc/hpc_migration_context.md`（即本上下文）
+- **HPC 专用配置**：`configs/qwen2.5_1.5b_phase1_binary_debug_hpc.yaml`（使用前将 `YOUR_USERNAME` 改为 Palmetto 用户名）。
 
 新 chat 可基于以上内容讨论 HPC 环境、路径、资源配置和作业脚本，无需再从头梳理项目与配置。
