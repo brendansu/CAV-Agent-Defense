@@ -13,7 +13,7 @@
 #   JSONL_DIR=$HOME/veremi_agent/data/processed/jsonl/phase1_binary
 #   LORA_DIR=/scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug-long
 
-JSONL_DIR="${JSONL_DIR:-$HOME/veremi_agent/data/processed/jsonl/phase1_binary}"
+JSONL_DIR="${JSONL_DIR:-$HOME/veremi_agent/data/processed/jsonl/phase1_binary_1of8}"
 LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug-long}"
 
 module load cuda/12.3.0
@@ -27,7 +27,7 @@ echo "LORA_DIR=$LORA_DIR"
 
 srun python -m src.eval.eval_phase1_binary \
   --jsonl_dir "$JSONL_DIR" \
-  --split test_subset_1of8 \
+  --split test \
   --mode lora \
   --lora_dir "$LORA_DIR" \
   --max_seq_len 1536 \

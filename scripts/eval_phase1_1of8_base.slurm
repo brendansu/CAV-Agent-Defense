@@ -12,7 +12,7 @@
 # By default uses:
 #   JSONL_DIR=$HOME/veremi_agent/data/processed/jsonl/phase1_binary
 
-JSONL_DIR="${JSONL_DIR:-$HOME/veremi_agent/data/processed/jsonl/phase1_binary}"
+JSONL_DIR="${JSONL_DIR:-$HOME/veremi_agent/data/processed/jsonl/phase1_binary_1of8}"
 
 module load cuda/12.3.0
 module load anaconda3/2023.09-0
@@ -24,7 +24,7 @@ echo "JSONL_DIR=$JSONL_DIR"
 
 srun python -m src.eval.eval_phase1_binary \
   --jsonl_dir "$JSONL_DIR" \
-  --split test_subset_1of8 \
+  --split test \
   --mode base \
   --max_seq_len 1536 \
   --max_samples 0 \
