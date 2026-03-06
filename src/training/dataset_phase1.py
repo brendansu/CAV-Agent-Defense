@@ -154,10 +154,12 @@ def build_phase1_prompt(example: dict) -> str:
 def preprocess_example(example: dict) -> dict:
     """
     datasets.map 用的预处理函数：
-        raw JSONL 样本 -> 添加 'text' 字段（完整 prompt+label）。
+        raw JSONL 样本 -> 添加 'text' 与 'is_attack'（用于 loss 加权）。
     """
     text = build_phase1_prompt(example)
-    return {"text": text}
+    label = example.get("output", "BENIGN")
+    is_attack = 1 if label == "ATTACK" else 0
+    return {"text": text, "is_attack": is_attack}
 
 
 def tokenize_function(
@@ -167,16 +169,17 @@ def tokenize_function(
 ) -> dict:
     """
     将批量样本的 'text' 字段编码成 token，并构造 labels。
-    对于因果语言模型，最简单的做法是 labels = input_ids。
+    同时保留 is_attack 与每条序列的 length（用于 answer 位置 loss 加权）。
     """
     encoded = tokenizer(
         examples["text"],
         truncation=True,
         max_length=max_seq_len,
     )
-    # 在 batched=True 时，encoded["input_ids"] 是 List[List[int]]
-    # 这里直接复制一份作为 labels，Trainer 或自定义 Trainer 可据此计算 loss
     encoded["labels"] = encoded["input_ids"]
+    # 答案 token 为每句最后一个 token；length 供 collate 后定位答案位置
+    encoded["length"] = [len(ids) for ids in encoded["input_ids"]]
+    encoded["is_attack"] = examples["is_attack"]
     return encoded
 
 

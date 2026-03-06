@@ -6,6 +6,7 @@ models/.h5
 models/.onnx
 models/.joblib
 /outputs/
+/hpc_adapter/
 
 === Python & Environments ===
 pycache/

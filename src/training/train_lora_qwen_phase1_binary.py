@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import torch
+import torch.nn.functional as F
 import yaml
 from transformers import (
     AutoModelForCausalLM,
@@ -175,8 +176,15 @@ def build_training_arguments(
 
 class CausalLMTrainer(Trainer):
     """
-    自定义 Trainer，以确保在没有 labels 字段时也能根据 input_ids 计算 loss。
+    自定义 Trainer：支持按类别加权的 answer loss。
+    - BENIGN：全序列 loss（鼓励有逻辑地“抄写”一致轨迹）。
+    - ATTACK：仅对答案 token 算 loss 并乘 answer_loss_weight_attack（不鼓励学抄攻击内容）。
     """
+
+    def __init__(self, answer_loss_weight_attack: float = 0.0, **kwargs):
+        super().__init__(**kwargs)
+        # 0 或未设置时沿用默认全序列 loss
+        self._answer_loss_weight_attack = answer_loss_weight_attack
 
     def compute_loss(
         self,
@@ -186,14 +194,54 @@ class CausalLMTrainer(Trainer):
         num_items_in_batch: int | None = None,
         **kwargs
     ):
-        # 从 inputs 中取出 labels，避免 **inputs 里重复传 labels
         labels = inputs.pop("labels", None)
         if labels is None:
-            # 回退策略：labels 直接使用 input_ids（完整自回归监督）
             labels = inputs["input_ids"].clone()
-        outputs = model(**inputs, labels=labels)
-        loss = outputs.loss
-        if return_outputs:  # 可选：返回 outputs 以便进一步分析
+
+        is_attack = inputs.pop("is_attack", None)
+        length = inputs.pop("length", None)
+        use_weighted = (
+            self._answer_loss_weight_attack > 0
+            and is_attack is not None
+            and length is not None
+        )
+
+        if not use_weighted:
+            outputs = model(**inputs, labels=labels)
+            loss = outputs.loss
+            if return_outputs:
+                return loss, outputs
+            return loss
+
+        # 加权 loss：BENIGN 全序列，ATTACK 仅答案位置
+        outputs = model(**inputs)
+        logits = outputs.logits  # (B, L, V)
+        B, L, V = logits.shape
+        device = logits.device
+        if labels.dim() == 1:
+            labels = labels.unsqueeze(0)
+        is_attack = is_attack.to(device)
+        length = length.to(device)
+
+        per_sample_losses = []
+        for i in range(B):
+            li = length[i].item()
+            if li < 2:
+                li = 2
+            if is_attack[i].item() == 0:
+                # BENIGN: 全序列 causal LM loss（logits[:li-1] 预测 labels[1:li]）
+                logits_i = logits[i, : li - 1].reshape(-1, V)
+                labels_i = labels[i, 1:li].reshape(-1)
+                loss_i = F.cross_entropy(logits_i, labels_i)
+            else:
+                # ATTACK: 仅答案位置，并加权
+                loss_i = F.cross_entropy(
+                    logits[i, li - 2].unsqueeze(0),
+                    labels[i, li - 1].unsqueeze(0),
+                ) * self._answer_loss_weight_attack
+            per_sample_losses.append(loss_i)
+        loss = torch.stack(per_sample_losses).mean()
+        if return_outputs:
             return loss, outputs
         return loss
 
@@ -255,11 +303,13 @@ def main() -> None:
 
     # 构建 TrainingArguments 和 Trainer
     training_args = build_training_arguments(config, train_dataset_size=len(train_ds))
+    answer_loss_weight_attack = float(config.get("answer_loss_weight_attack", 0.0))
     trainer = CausalLMTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
+        answer_loss_weight_attack=answer_loss_weight_attack,
     )
 
     # 训练
