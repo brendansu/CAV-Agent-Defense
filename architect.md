@@ -1,49 +1,33 @@
-Architect: Agentic CAV Cyberattack Detection System
+Architecture: Agentic CAV Attack Detection via LLM Reasoning
+1. Executive Summary
+This project transitions from traditional "signal-in, result-out" perception models to a Reasoning-based Security Agent. The system leverages a Large Language Model (LLM) fine-tuned via LoRA (Low-Rank Adaptation) to act as a digital detective. Instead of simple classification, the agent analyzes the physical consistency and logical coherence of V2X (Vehicle-to-Everything) messages by comparing subjective observations (Vehicle Logs) with objective physical laws.
 
-1. Project Vision
-To build a cyberattack detection system for Connected and Autonomous Vehicles (CAV) based on Agentic AI.
-Core Concept: Decouple the detection process into two layers: "Perception" and "Reasoning."
-Perception Layer (The Sense): Utilizes Machine Learning models for rapid probabilistic scanning of individual BSM (Basic Safety Messages).
-Reasoning Layer (The Agent): Combines vehicle historical memory, laws of physics, and multi-source data consistency to perform deep verification and final adjudication of alerts from the perception layer.
+2. Core Components
+A. Contextual Awareness Module (Data Orchestrator)
+This module reconstructs the "worldview" of an individual vehicle from raw JSON logs.
+    Self-State Integrator: Extracts type: 2 (GPS) data to establish the vehicle's own ground-truth position and trajectory.
+    Neighbor Observation stream: Parses incoming type: 3 (BSM) messages, capturing reported coordinates, speeds, and RSSI (Received Signal Strength Indicator).
+    Temporal Memory Buffer: Maintains a sliding window of previous states for each SenderID to detect sudden jumps or physical impossibilities over time.
 
-2. Technical Stack
-Language: Python 3.10+
-Data: VeReMi Extension Dataset (Balanced CSV for training, Raw CSV for testing).
-Core ML: Scikit-learn (RandomForest / XGBoost) for base detection.
-Agent Logic: Modular State-based Reasoning (Memory-driven).
-Validation: Pytest for unit testing physical constraints.
+B. The Reasoning Core (LoRA-tuned LLM)
+The "brain" of the agent, trained to understand vehicular physics and communication patterns.
+    Plausibility Checker: Evaluates if a reported position change is physically possible given the elapsed time ($\Delta Pos / \Delta t$).
+    Cross-Modal Verification: Correlates spatial data with signal data (e.g., "Does this RSSI match the claimed 2km distance?").
+    Inconsistency Resolver: Identifies "lying" nodes by detecting discrepancies between a vehicle's self-reported state and its transmitted data.
 
-3. System Architecture
-3.1 Folder Structure
-/data:
-    /processed: Balanced datasets (for training the base detector).
-    /raw: Original imbalanced datasets (for Agent stress testing/evaluation).
-/models: Stored trained .pkl models and scalers.
-/src:
-    /perception: Low-level sensing (feature engineering, model training, real-time scoring).
-    /reasoning: Agent core (memory.py buffer, physics_tool.py validator, agent_logic.py decision center).
-    /simulation: Offline streaming simulator to replay CSV data as real-time message flows.
-/tests: Unit tests for physical tools and Agent logic.
-3.2 Component Responsibilities
-Base Detector: Identifies statistical anomalies (e.g., outliers in RSSI vs. position).
-Trajectory Memory: Buffers the last $N$ seconds of state for each sender_id to build spatio-temporal trajectories.
-Physics Validator:
-    Calculates if $\Delta position / \Delta time$ matches the speed claimed in the BSM.
-    Checks if acceleration exceeds vehicle physical limits ($< 9 m/s^2$).
+C. Agentic Action & Explanation Layer
+    Chain-of-Thought (CoT) Output: The model generates a verbal justification for its decision before issuing a label.
+    Adaptive Response: Based on the reasoning, the agent decides whether to ignore the message, flag the sender for observation, or broadcast a network-wide alert.
 
-4. Key Logic Flows
-4.1 Detection & Reasoning Loop
-Input: Receive a new BSM message.
-Step A: Base Detector provides an initial anomaly score $S$ ($0 \le S \le 1$).
-Step B: If $S$ exceeds a threshold, the Agent is triggered to call the Physics Validator.
-Step C: Agent retrieves the historical trajectory from Memory to check for spatio-temporal consistency.
-Final Decision:
-    Confirmed: High score + Physics violation -> Mark as ATTACK with specific reasoning.
-    Suspicious: High score but physics plausible -> Mark as WARNING, continue observing.
-    Normal: All indicators within normal bounds.
+3. System Workflow
+Observation Phase: The agent ingests a sequence of messages from a specific scenario.
+Evidence Alignment: The pre-processing script aligns the "Truth" (Type 2/Ground Truth) with the "Claim" (Type 3) to create a comparative prompt.
+Logical Inference: The LLM processes the prompt, looking for physical contradictions (e.g., constant offsets in A1 attacks).
+Actionable Decision: The model outputs a structured response: [Reasoning] -> [Decision] -> [Confidence].
+Evaluation: Results are validated against the groundtruth.json to measure Precision, Recall, and the robustness of the reasoning chain.
 
-5. Development Phases
-Phase 1: Data Preview & EDA (using balanced Zenodo data).
-Phase 2: Train and save the Perception Layer classification model.
-Phase 3: Develop Physics Tools and Trajectory Memory module (verified by unit tests).
-Phase 4: Integrate Agent logic and perform replay testing on raw imbalanced data.
+5. Technical Stack
+    Data Source: VeReMi Original Dataset (JSON).
+    Fine-tuning Technique: LoRA (Low-Rank Adaptation) for parameter-efficient learning.
+    Reasoning Framework: Chain-of-Thought (CoT) prompting for explainable AI (XAI).
+    Environment: Python-based data pipeline + HuggingFace PEFT library.
