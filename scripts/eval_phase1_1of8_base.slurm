@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-eval-base
 #SBATCH --partition=work1
-#SBATCH --time=08:00:00
+#SBATCH --time=36:00:00
 #SBATCH --mem=32gb
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=a100:1
