@@ -55,23 +55,6 @@ from transformers import (
 
 from ..training.dataset_phase1 import build_phase1_prompt
 
-# #region agent log
-DEBUG_LOG_PATH = Path(__file__).resolve().parent.parent.parent / "debug-769466.log"
-
-def _debug_log(message: str, data: dict, hypothesis_id: str = "", run_id: str = "eval"):
-    payload = {
-        "sessionId": "769466",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": "eval_phase1_binary.py",
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-# #endregion
-
 EvalMode = Literal["base", "lora", "both"]
 
 
@@ -380,11 +363,6 @@ def run_eval_for_model(
     total = len(prompts)
     print(f"Evaluating {model_tag} on {total} samples...")
 
-    # #region agent log
-    skip_value_error = 0
-    skip_unknown_pred = 0
-    # #endregion
-
     for i, (prompt, true_label) in enumerate(zip(prompts, labels)):
         enc = tokenizer(
             prompt,
@@ -417,40 +395,15 @@ def run_eval_for_model(
             prompt_tail = prompt[-tail_len:] if len(prompt) > tail_len else prompt
             print(f"      prompt_tail:\n{prompt_tail}")
 
-        # #region agent log
-        if i < 3:
-            _debug_log(
-                "sample true_label, gen_text, pred_label",
-                {"i": i, "true_label": true_label, "gen_text": gen_text, "pred_label": pred_label},
-                hypothesis_id="H2_H3",
-            )
-        if i == 0:
-            _debug_log(
-                "first prompt tail",
-                {"prompt_tail": prompt[-200:] if len(prompt) >= 200 else prompt},
-                hypothesis_id="H4",
-            )
-        # #endregion
-
         try:
             y_t = label_to_int(true_label)
         except ValueError:
             # Skip unknown ground-truth labels
-            # #region agent log
-            skip_value_error += 1
-            if i < 3:
-                _debug_log("skip: label_to_int ValueError", {"i": i, "true_label": true_label}, hypothesis_id="H1")
-            # #endregion
             continue
 
         if pred_label == "UNKNOWN":
             # For now, treat UNKNOWN as BENIGN=0 (or skip).
             # Here we choose to skip UNKNOWN predictions.
-            # #region agent log
-            skip_unknown_pred += 1
-            if i < 3:
-                _debug_log("skip: pred UNKNOWN", {"i": i, "gen_text": gen_text}, hypothesis_id="H2")
-            # #endregion
             continue
 
         y_p = label_to_int(pred_label)
@@ -474,14 +427,6 @@ def run_eval_for_model(
 
     metrics = compute_binary_metrics(y_true_int, y_pred_int)
     n_used = len(y_true_int)
-
-    # #region agent log
-    _debug_log(
-        "eval skip counts and n_used",
-        {"skip_value_error": skip_value_error, "skip_unknown_pred": skip_unknown_pred, "n_used": n_used},
-        hypothesis_id="H1_H2_H5",
-    )
-    # #endregion
 
     print(f"\n=== Results for {model_tag} ===")
     print(f"Used samples (after skipping UNKNOWN/invalid): {n_used}")
