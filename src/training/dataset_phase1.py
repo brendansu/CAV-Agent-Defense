@@ -170,15 +170,24 @@ def tokenize_function(
     """
     将批量样本的 'text' 字段编码成 token，并构造 labels。
     同时保留 is_attack 与每条序列的 length（用于 answer 位置 loss 加权）。
+    padding="max_length" 保证 batch 内长度一致，避免 default collator 堆叠时报错。
     """
     encoded = tokenizer(
         examples["text"],
         truncation=True,
         max_length=max_seq_len,
+        padding="max_length",
+        return_tensors=None,
     )
-    encoded["labels"] = encoded["input_ids"]
-    # 答案 token 为每句最后一个 token；length 供 collate 后定位答案位置
-    encoded["length"] = [len(ids) for ids in encoded["input_ids"]]
+    # labels：padding 位置置 -100，否则与 input_ids 一致（causal LM）
+    labels = [list(ids) for ids in encoded["input_ids"]]
+    for i in range(len(labels)):
+        for j in range(len(encoded["attention_mask"][i])):
+            if encoded["attention_mask"][i][j] == 0:
+                labels[i][j] = -100
+    encoded["labels"] = labels
+    # 答案 token 为每句最后一个非 pad token；length = 非 pad 的 token 数
+    encoded["length"] = [sum(encoded["attention_mask"][i]) for i in range(len(encoded["attention_mask"]))]
     # 从 output 列派生 is_attack（第一轮 map 的 is_attack 可能未写入 dataset，此处保证有值）
     encoded["is_attack"] = [1 if (o == "ATTACK") else 0 for o in examples["output"]]
     return encoded
