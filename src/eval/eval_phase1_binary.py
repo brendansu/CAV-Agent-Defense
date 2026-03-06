@@ -388,12 +388,6 @@ def run_eval_for_model(
 
         if print_predictions > 0 and i < print_predictions:
             print(f"  [{i}] true={true_label!r} pred={pred_label!r} output={gen_text!r}")
-            # Print input (prompt) so we can check truncation: token count + tail of prompt
-            truncated = input_len >= max_seq_len
-            print(f"      prompt_tokens={input_len} (truncated={truncated}, max_seq_len={max_seq_len})")
-            tail_len = 500
-            prompt_tail = prompt[-tail_len:] if len(prompt) > tail_len else prompt
-            print(f"      prompt_tail:\n{prompt_tail}")
 
         try:
             y_t = label_to_int(true_label)
