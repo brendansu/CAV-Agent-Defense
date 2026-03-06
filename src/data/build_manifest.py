@@ -139,12 +139,7 @@ def main():
     print(f"Built manifest: {len(df)} runs", flush=True)
 
     manifest_path = out_dir / "runs.parquet"
-    try:
-        df.to_parquet(manifest_path, index=False)
-    except ImportError:
-        print("Parquet unavailable (install pyarrow). Writing CSV instead.", flush=True)
-        manifest_path = out_dir / "runs.csv"
-        df.to_csv(manifest_path, index=False)
+    df.to_parquet(manifest_path, index=False)
 
     # 可选：也写一个 csv，便于快速查看
     if args.write_csv:

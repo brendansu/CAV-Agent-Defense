@@ -13,3 +13,4 @@ bitsandbytes
 
 # Data I/O
 ujson
+pyarrow
