@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict
 
@@ -29,7 +30,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 
-from training.dataset_phase1 import load_phase1_binary_datasets
+from .dataset_phase1 import load_phase1_binary_datasets
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,23 +114,43 @@ def setup_tokenizer_and_model(
     return tokenizer, model
 
 
-def build_training_arguments(config: Dict[str, Any]) -> TrainingArguments:
+def build_training_arguments(
+    config: Dict[str, Any],
+    train_dataset_size: int,
+) -> TrainingArguments:
+    """
+    根据配置和 train 数据集大小构造 TrainingArguments。
+    这里使用 warmup_steps 代替 warmup_ratio，以避免弃用警告。
+    """
     output_dir = config.get("output_dir", "outputs/qwen2.5-1.5b-phase1-binary")
+
+    per_device_train_batch_size = int(config.get("per_device_train_batch_size", 1))
+    gradient_accumulation_steps = int(config.get("gradient_accumulation_steps", 8))
+    num_train_epochs = float(config.get("num_train_epochs", 1.0))
+    warmup_ratio = float(config.get("warmup_ratio", 0.03))
+
+    # 单机单卡场景下，global_batch_size = per_device_train_batch_size
+    steps_per_epoch = math.ceil(
+        train_dataset_size / (per_device_train_batch_size * gradient_accumulation_steps)
+    )
+    total_training_steps = int(steps_per_epoch * num_train_epochs)
+    warmup_steps = int(total_training_steps * warmup_ratio)
+    print(
+        f"Estimated steps_per_epoch={steps_per_epoch}, "
+        f"total_training_steps={total_training_steps}, "
+        f"warmup_steps={warmup_steps}"
+    )
 
     args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=int(config.get("per_device_train_batch_size", 1)),
+        per_device_train_batch_size=per_device_train_batch_size,
         per_device_eval_batch_size=int(config.get("per_device_eval_batch_size", 1)),
-        gradient_accumulation_steps=int(config.get("gradient_accumulation_steps", 8)),
-        num_train_epochs=float(config.get("num_train_epochs", 1.0)),
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        num_train_epochs=num_train_epochs,
         learning_rate=float(config.get("learning_rate", 1e-4)),
         lr_scheduler_type=config.get("lr_scheduler_type", "cosine"),
-        warmup_ratio=float(config.get("warmup_ratio", 0.03)),
+        warmup_steps=warmup_steps,
         logging_steps=int(config.get("logging_steps", 50)),
-        evaluation_strategy=config.get("evaluation_strategy", "steps"),
-        eval_steps=int(config.get("eval_steps", 500)),
-        save_strategy=config.get("save_strategy", "steps"),
-        save_steps=int(config.get("save_steps", 500)),
         save_total_limit=int(config.get("save_total_limit", 2)),
         fp16=True,
         bf16=False,
@@ -137,6 +158,20 @@ def build_training_arguments(config: Dict[str, Any]) -> TrainingArguments:
         report_to=config.get("report_to", []),
     )
     return args
+
+
+class CausalLMTrainer(Trainer):
+    """
+    自定义 Trainer，以确保在没有 labels 字段时也能根据 input_ids 计算 loss。
+    """
+
+    def compute_loss(self, model, inputs, num_items_in_batch: int | None = None, **kwargs):
+        labels = inputs.get("labels", None)
+        if labels is None:
+            # 回退策略：labels 直接使用 input_ids（完整自回归监督）
+            labels = inputs["input_ids"].clone()
+        outputs = model(**inputs, labels=labels)
+        return outputs.loss
 
 
 def main() -> None:
@@ -186,8 +221,8 @@ def main() -> None:
     print(f"Val dataset size:   {len(val_ds)}")
 
     # 构建 TrainingArguments 和 Trainer
-    training_args = build_training_arguments(config)
-    trainer = Trainer(
+    training_args = build_training_arguments(config, train_dataset_size=len(train_ds))
+    trainer = CausalLMTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,

@@ -114,14 +114,18 @@ def tokenize_function(
     max_seq_len: int,
 ) -> dict:
     """
-    将批量样本的 'text' 字段编码成 token。当前不显式返回 labels，
-    训练脚本可以用 causal LM 方式将 labels = input_ids。
+    将批量样本的 'text' 字段编码成 token，并构造 labels。
+    对于因果语言模型，最简单的做法是 labels = input_ids。
     """
-    return tokenizer(
+    encoded = tokenizer(
         examples["text"],
         truncation=True,
         max_length=max_seq_len,
     )
+    # 在 batched=True 时，encoded["input_ids"] 是 List[List[int]]
+    # 这里直接复制一份作为 labels，Trainer 或自定义 Trainer 可据此计算 loss
+    encoded["labels"] = encoded["input_ids"]
+    return encoded
 
 
 def load_phase1_binary_datasets(
