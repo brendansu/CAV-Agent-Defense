@@ -1,0 +1,9 @@
+# Data Analysis
+pandas
+numpy
+matplotlib
+seaborn
+jupyter
+
+# Machine Learning
+scikit-learn
