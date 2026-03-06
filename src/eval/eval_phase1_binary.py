@@ -42,6 +42,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Literal, Tuple
+import subprocess
 
 import torch
 from datasets import Dataset, load_dataset
@@ -179,6 +180,14 @@ def parse_args() -> EvalConfig:
     )
     return cfg
 
+def get_gpu_util():
+    try:
+        result = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]
+        )
+        return int(result.decode().strip().split("\n")[0])
+    except:
+        return -1
 
 def load_raw_split(jsonl_dir: Path, split: str) -> Dataset:
     split_file = jsonl_dir / f"{split}.jsonl"
@@ -421,8 +430,11 @@ def run_eval_for_model(
             elapsed = time.time() - start_time
             processed = i + 1
             rate = processed / elapsed if elapsed > 0 else 0
-            eta = (total - processed) / rate / 3600
-            print(f"  Processed {processed} / {total} samples, {rate:.2f} samples/sec, ETA {eta:.2f} hours")
+            eta = max((total - processed) / rate / 3600, 0) if rate > 0 else 0
+            gpu_util = get_gpu_util()
+            elapsed_h = elapsed / 3600
+
+            print(f"Processed {processed}/{total} | {rate:.2f} samples/s | GPU {gpu_util}% | elapsed {elapsed_h:.2f} h | ETA {eta:.2f} h")
         
         if (i + 1) % 10000 == 0: # add intermediate metrics print every 10000 samples (walltime fallback measure)
             metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
