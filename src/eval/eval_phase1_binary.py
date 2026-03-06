@@ -418,6 +418,15 @@ def run_eval_for_model(
 
         if (i + 1) % 50 == 0 or (i + 1) == total:
             print(f"  Processed {i + 1} / {total} samples")
+        
+        if (i + 1) % 10000 == 0 or (i + 1) == total: # add intermediate metrics print every 10000 samples (walltime fallback measure)
+            metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
+            n_used_int = len(y_true_int)
+
+            print(f"\n=== Results for {model_tag} at {i + 1} samples ===")
+            print(f"Used samples (after skipping UNKNOWN/invalid): {n_used_int}")
+            print(f"Accuracy:  {metrics_int['accuracy']:.4f}")
+            print(f"F1 (ATTACK): {metrics_int['f1_attack']:.4f}")
 
     metrics = compute_binary_metrics(y_true_int, y_pred_int)
     n_used = len(y_true_int)
