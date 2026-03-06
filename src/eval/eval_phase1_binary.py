@@ -419,7 +419,7 @@ def run_eval_for_model(
         if (i + 1) % 5000 == 0 or (i + 1) == total:
             print(f"  Processed {i + 1} / {total} samples")
         
-        if (i + 1) % 10000 == 0 or (i + 1) == total: # add intermediate metrics print every 10000 samples (walltime fallback measure)
+        if (i + 1) % 10000 == 0: # add intermediate metrics print every 10000 samples (walltime fallback measure)
             metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
             n_used_int = len(y_true_int)
 
