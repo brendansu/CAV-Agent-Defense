@@ -38,6 +38,7 @@ Typical usage (from repo root, with src on PYTHONPATH):
 
 import argparse
 import json
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +74,8 @@ class EvalConfig:
     show_examples: int
     print_predictions: int
     device: str | None
+    num_shards: int
+    shard_index: int
 
 
 def parse_args() -> EvalConfig:
@@ -152,12 +155,31 @@ def parse_args() -> EvalConfig:
         default=None,
         help="Torch device override, e.g. 'cuda:0' or 'cpu'. If None, use HF device_map.",
     )
+    parser.add_argument(
+        "--num_shards",
+        type=int,
+        default=1,
+        help="Total number of shards to split evaluation into (for running multiple jobs in parallel).",
+    )
+    parser.add_argument(
+        "--shard_index",
+        type=int,
+        default=0,
+        help="Index of this shard in [0, num_shards-1].",
+    )
 
     args = parser.parse_args()
 
     jsonl_dir = Path(args.jsonl_dir)
     if not jsonl_dir.exists():
         raise FileNotFoundError(f"jsonl_dir not found: {jsonl_dir}")
+
+    if args.num_shards <= 0:
+        raise ValueError(f"--num_shards must be positive, got {args.num_shards}")
+    if not (0 <= args.shard_index < args.num_shards):
+        raise ValueError(
+            f"--shard_index must be in [0, num_shards-1], got {args.shard_index} with num_shards={args.num_shards}"
+        )
 
     if args.mode in ("lora", "both") and args.lora_dir is None:
         raise ValueError("--lora_dir is required when mode is 'lora' or 'both'.")
@@ -177,6 +199,8 @@ def parse_args() -> EvalConfig:
         show_examples=max(0, args.show_examples),
         print_predictions=max(0, args.print_predictions),
         device=args.device,
+        num_shards=args.num_shards,
+        shard_index=args.shard_index,
     )
     return cfg
 
@@ -218,14 +242,27 @@ def build_eval_prompt(example: dict) -> str:
 def prepare_prompts_and_labels(
     ds: Dataset,
     max_samples: int | None = None,
+    num_shards: int = 1,
+    shard_index: int = 0,
 ) -> Tuple[List[str], List[str]]:
     prompts: List[str] = []
     labels: List[str] = []
 
     n = len(ds)
-    limit = n if max_samples is None else min(max_samples, n)
+    total_limit = n if max_samples is None else min(max_samples, n)
 
-    for i in range(limit):
+    if num_shards <= 1:
+        indices = range(total_limit)
+    else:
+        shard_size = (total_limit + num_shards - 1) // num_shards  # ceil
+        start = shard_index * shard_size
+        end = min(start + shard_size, total_limit)
+        if start >= end:
+            # This shard has no data
+            return [], []
+        indices = range(start, end)
+
+    for i in indices:
         ex = ds[i]
         prompt = build_eval_prompt(ex)
         label = str(ex.get("output", "BENIGN"))
@@ -310,13 +347,20 @@ def load_base_model(
     load_in_4bit: bool,
     device: str | None,
 ) -> PreTrainedModel:
+    print(
+        f"[DEBUG] load_base_model: model_name={model_name}, load_in_4bit={load_in_4bit}, device={device}",
+        flush=True,
+    )
+    start_time = time.time()
     if load_in_4bit:
+        print("[DEBUG] constructing BitsAndBytesConfig for 4-bit quantization", flush=True)
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.float16,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
         )
+        print("[DEBUG] before AutoModelForCausalLM.from_pretrained (4bit)", flush=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             quantization_config=bnb_config,
@@ -325,6 +369,7 @@ def load_base_model(
         if device is not None:
             model.to(device)
     else:
+        print("[DEBUG] before AutoModelForCausalLM.from_pretrained (no_4bit)", flush=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             device_map="auto" if device is None else None,
@@ -333,6 +378,8 @@ def load_base_model(
         if device is not None:
             model.to(device)
 
+    elapsed = time.time() - start_time
+    print(f"[DEBUG] finished load_base_model in {elapsed:.1f} seconds", flush=True)
     model.eval()
     return model
 
@@ -471,8 +518,17 @@ def main() -> None:
         torch.backends.cuda.matmul.allow_tf32 = True
 
     ds = load_raw_split(cfg.jsonl_dir, cfg.split)
-    prompts, labels = prepare_prompts_and_labels(ds, cfg.max_samples)
-    print(f"Loaded split '{cfg.split}' from {cfg.jsonl_dir} with {len(prompts)} samples.")
+    prompts, labels = prepare_prompts_and_labels(
+        ds,
+        cfg.max_samples,
+        num_shards=cfg.num_shards,
+        shard_index=cfg.shard_index,
+    )
+    print(
+        f"Loaded split '{cfg.split}' from {cfg.jsonl_dir} with {len(ds)} total samples; "
+        f"shard {cfg.shard_index + 1}/{cfg.num_shards} has {len(prompts)} samples.",
+        flush=True,
+    )
 
     # Base tokenizer: either from LoRA dir (if evaluating only LoRA) or from model_name.
     tokenizer_src = (
