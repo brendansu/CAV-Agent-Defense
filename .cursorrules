@@ -1,0 +1,37 @@
+Cursor Rules for Agentic CAV Cyberattack Detection
+1. General Principles
+Architectural Alignment: Always refer to architect.md for the system structure. Maintain the strict separation between the "Perception" layer and the "Reasoning" layer.
+
+Strict Typing: All Python functions must include PEP 484 type hints. Use Optional, List, Dict, and custom types where appropriate.
+
+Clean Code: Follow PEP 8 guidelines. Keep functions small (under 30 lines) and focused on a single responsibility.
+
+2. Testing & Reliability
+Test-Driven Development (TDD): Before implementing any tool in src/reasoning/physics_tool.py, you MUST generate a corresponding pytest file in tests/.
+
+Validation: All physics-based calculations (e.g., velocity check, RSSI-distance mapping) must be validated against known physical constants (e.g., max car acceleration ~9 m/s²).
+
+3. Layer-Specific Rules
+Perception Layer
+Independence: Perception models must not have access to the VehicleMemory. They should only process the features of the current incoming message.
+
+Scalability: Use scikit-learn pipelines to ensure feature scaling and model inference are bundled.
+
+Reasoning Layer (The Agent)
+Memory Management: The VehicleMemory should use a sliding window approach (e.g., deque) to avoid memory leaks during long simulations.
+
+Decision Transparency: Every decision made by the Agent must return a dictionary containing is_attack (bool), confidence (float), and reasoning (string).
+
+Tool Use: The Agent should call external "tools" (from physics_tool.py) rather than hardcoding physics logic inside the main agent class.
+
+4. Documentation Standard
+Google Style: Use Google-style docstrings for all modules, classes, and public methods.
+
+Inline Comments: Explain "Why" something is being done (the logic), not just "What" the code does.
+
+5. Prohibited Patterns
+Do not use global variables for vehicle state; always use the Memory class.
+
+Do not bypass the Physics Validator for "High Score" alerts; the Agent must always attempt to verify the physics if the score is suspicious.
+
+Do not write dense "God Objects"; keep simulation, perception, and reasoning in their respective files.

@@ -1,0 +1,31 @@
+=== Data & Models ===
+Do not upload large datasets or model binaries to GitHub
+data/
+models/.pkl
+models/.h5
+models/.onnx
+models/.joblib
+
+=== Python & Environments ===
+pycache/
+*.py[cod]
+*$py.class
+.env
+.venv
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+=== Jupyter Notebook ===
+.ipynb_checkpoints/
+/.ipynb_checkpoints/
+
+=== System & IDE ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.cursor/
+*.log
