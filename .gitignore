@@ -1,6 +1,6 @@
 === Data & Models ===
 Do not upload large datasets or model binaries to GitHub
-data/
+/data/
 models/.pkl
 models/.h5
 models/.onnx
