@@ -362,6 +362,7 @@ def run_eval_for_model(
 
     total = len(prompts)
     print(f"Evaluating {model_tag} on {total} samples...")
+    start_time = time.time()
 
     for i, (prompt, true_label) in enumerate(zip(prompts, labels)):
         enc = tokenizer(
@@ -417,7 +418,11 @@ def run_eval_for_model(
                 )
 
         if (i + 1) % 5000 == 0 or (i + 1) == total:
-            print(f"  Processed {i + 1} / {total} samples")
+            elapsed = time.time() - start_time
+            processed = i + 1
+            rate = processed / elapsed if elapsed > 0 else 0
+            eta = (total - processed) / rate / 3600
+            print(f"  Processed {processed} / {total} samples, {rate:.2f} samples/sec, ETA {eta:.2f} hours")
         
         if (i + 1) % 10000 == 0: # add intermediate metrics print every 10000 samples (walltime fallback measure)
             metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
