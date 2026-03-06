@@ -128,5 +128,6 @@ Full 数据集配置在 `configs/qwen2.5_1.5b_phase1_binary.yaml`，将 `jsonl_d
 - 更完整的数据 pipeline、训练说明与截断排查过程：`doc/training_notes.md`
 - 本文件：`doc/hpc_migration_context.md`（即本上下文）
 - **HPC 专用配置**：`configs/qwen2.5_1.5b_phase1_binary_debug_hpc.yaml`（使用前将 `YOUR_USERNAME` 改为 Palmetto 用户名）。
+- **HPC 跑完训练后**：看结果、跑 test eval、根据 F1(ATTACK) 调参：`doc/phase1_hpc_next_steps.md`；Eval 用 `scripts/eval_phase1_debug.slurm`。
 
 新 chat 可基于以上内容讨论 HPC 环境、路径、资源配置和作业脚本，无需再从头梳理项目与配置。

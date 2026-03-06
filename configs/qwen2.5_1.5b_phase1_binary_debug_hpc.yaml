@@ -12,14 +12,15 @@ max_seq_len: 1536
 
 # Optimizer / schedule
 learning_rate: 1.0e-4
-num_train_epochs: 0.05
+# 4/2 batch 下每步更快；0.5 epoch ≈ 1 h 量级（0.2 epoch 会明显短于 1 h）
+num_train_epochs: 0.5
 lr_scheduler_type: cosine
 warmup_ratio: 0.03
 
-# Batch / accumulation
-per_device_train_batch_size: 1
-per_device_eval_batch_size: 1
-gradient_accumulation_steps: 8
+# Batch / accumulation（A100 显存富余：增大 batch 提高吞吐，有效 batch 仍=8 不改学习动态）
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 2
 
 # Logging / eval / checkpoints
 logging_steps: 50
