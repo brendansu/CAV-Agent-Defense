@@ -416,7 +416,7 @@ def run_eval_for_model(
                     }
                 )
 
-        if (i + 1) % 50 == 0 or (i + 1) == total:
+        if (i + 1) % 5000 == 0 or (i + 1) == total:
             print(f"  Processed {i + 1} / {total} samples")
         
         if (i + 1) % 10000 == 0 or (i + 1) == total: # add intermediate metrics print every 10000 samples (walltime fallback measure)
