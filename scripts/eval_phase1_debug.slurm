@@ -31,4 +31,6 @@ srun python -m src.eval.eval_phase1_binary \
   --mode both \
   --lora_dir "$LORA_DIR" \
   --max_seq_len 1536 \
-  --max_samples 0
+  --max_samples 0 \
+  --show_examples 0 \
+  --print_predictions 10
