@@ -306,13 +306,26 @@ def label_to_int(label: str) -> int:
 def compute_binary_metrics(y_true: Iterable[int], y_pred: Iterable[int]) -> Dict[str, float]:
     """
     Compute accuracy and F1 (ATTACK as positive) without external dependencies.
+
+    Returns both derived metrics and raw counts so that sharded evaluations can be
+    aggregated into a single global metric by summing counts across shards.
     """
     y_true = list(y_true)
     y_pred = list(y_pred)
     assert len(y_true) == len(y_pred)
     n = len(y_true)
     if n == 0:
-        return {"accuracy": 0.0, "f1_attack": 0.0}
+        return {
+            "accuracy": 0.0,
+            "f1_attack": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "n_used": 0,
+            "correct": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+        }
 
     correct = sum(1 for t, p in zip(y_true, y_pred) if t == p)
     acc = correct / n
@@ -331,6 +344,13 @@ def compute_binary_metrics(y_true: Iterable[int], y_pred: Iterable[int]) -> Dict
     return {
         "accuracy": acc,
         "f1_attack": f1,
+        "precision": precision,
+        "recall": recall,
+        "n_used": n,
+        "correct": correct,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
     }
 
 
@@ -408,6 +428,8 @@ def run_eval_for_model(
     show_examples: int,
     print_predictions: int,
     model_tag: str,
+    num_shards: int = 1,
+    shard_index: int = 0,
 ) -> None:
     assert len(prompts) == len(labels)
     device = next(model.parameters()).device
@@ -418,6 +440,8 @@ def run_eval_for_model(
 
     total = len(prompts)
     print(f"Evaluating {model_tag} on {total} samples...")
+    if num_shards > 1:
+        print(f"Shard {shard_index + 1}/{num_shards}")
     start_time = time.time()
 
     for i, (prompt, true_label) in enumerate(zip(prompts, labels)):
@@ -483,7 +507,7 @@ def run_eval_for_model(
 
             print(f"Processed {processed}/{total} | {rate:.2f} samples/s | GPU {gpu_util}% | elapsed {elapsed_h:.2f} h | ETA {eta:.2f} h")
         
-        if (i + 1) % 10000 == 0: # add intermediate metrics print every 10000 samples (walltime fallback measure)
+        if (i + 1) % 10000 == 0:  # add intermediate metrics print every 10000 samples (walltime fallback measure)
             metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
             n_used_int = len(y_true_int)
 
@@ -493,12 +517,32 @@ def run_eval_for_model(
             print(f"F1 (ATTACK): {metrics_int['f1_attack']:.4f}")
 
     metrics = compute_binary_metrics(y_true_int, y_pred_int)
-    n_used = len(y_true_int)
+    n_used = metrics["n_used"]
 
     print(f"\n=== Results for {model_tag} ===")
+    if num_shards > 1:
+        print(f"Shard {shard_index + 1}/{num_shards}")
     print(f"Used samples (after skipping UNKNOWN/invalid): {n_used}")
     print(f"Accuracy:  {metrics['accuracy']:.4f}")
     print(f"F1 (ATTACK): {metrics['f1_attack']:.4f}")
+    print(f"Precision (ATTACK): {metrics['precision']:.4f}")
+    print(f"Recall    (ATTACK): {metrics['recall']:.4f}")
+    print(
+        f"Counts: TP={metrics['tp']} FP={metrics['fp']} "
+        f"FN={metrics['fn']} correct={metrics['correct']}"
+    )
+
+    summary = {
+        "model_tag": model_tag,
+        "num_shards": num_shards,
+        "shard_index": shard_index,
+        "n_used": n_used,
+        "correct": metrics["correct"],
+        "tp": metrics["tp"],
+        "fp": metrics["fp"],
+        "fn": metrics["fn"],
+    }
+    print("METRICS_JSON:", json.dumps(summary))
 
     if show_examples > 0 and example_buffer:
         print("\n=== Example predictions (first few) ===")
@@ -554,6 +598,8 @@ def main() -> None:
             show_examples=cfg.show_examples,
             print_predictions=cfg.print_predictions,
             model_tag="base",
+            num_shards=cfg.num_shards,
+            shard_index=cfg.shard_index,
         )
         del base_model
         if torch.cuda.is_available():
@@ -584,6 +630,8 @@ def main() -> None:
             show_examples=cfg.show_examples,
             print_predictions=cfg.print_predictions,
             model_tag="lora",
+            num_shards=cfg.num_shards,
+            shard_index=cfg.shard_index,
         )
         del lora_model
         del base_model_for_lora

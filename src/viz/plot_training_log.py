@@ -74,6 +74,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If set, also show the plot window (useful when running locally).",
     )
+    parser.add_argument(
+        "--train-ymin",
+        type=float,
+        default=None,
+        help="Optional lower bound for the train loss axis. If omitted, chosen automatically.",
+    )
+    parser.add_argument(
+        "--train-ymax",
+        type=float,
+        default=None,
+        help="Optional upper bound for the train loss axis. If omitted, chosen automatically.",
+    )
+    parser.add_argument(
+        "--eval-ymin",
+        type=float,
+        default=None,
+        help="Optional lower bound for the eval loss axis. If omitted, chosen automatically.",
+    )
+    parser.add_argument(
+        "--eval-ymax",
+        type=float,
+        default=None,
+        help="Optional upper bound for the eval loss axis. If omitted, chosen automatically.",
+    )
     return parser.parse_args()
 
 
@@ -191,6 +215,10 @@ def plot_loss_curves(
     output_path: Path,
     title: str | None = None,
     show: bool = False,
+    train_ymin: float | None = None,
+    train_ymax: float | None = None,
+    eval_ymin: float | None = None,
+    eval_ymax: float | None = None,
 ) -> None:
     """
     Plot train/eval loss vs step and save to output_path.
@@ -225,6 +253,24 @@ def plot_loss_curves(
     ax1.set_ylabel("Train loss")
     if ax2 is not None:
         ax2.set_ylabel("Eval loss")
+
+    # Manual y-limits for train loss (if provided)
+    if train_ymin is not None or train_ymax is not None:
+        cur_ymin, cur_ymax = ax1.get_ylim()
+        if train_ymin is None:
+            train_ymin = cur_ymin
+        if train_ymax is None:
+            train_ymax = cur_ymax
+        ax1.set_ylim(train_ymin, train_ymax)
+
+    # Manual y-limits for eval loss (if provided and axis exists)
+    if ax2 is not None and (eval_ymin is not None or eval_ymax is not None):
+        cur_ymin, cur_ymax = ax2.get_ylim()
+        if eval_ymin is None:
+            eval_ymin = cur_ymin
+        if eval_ymax is None:
+            eval_ymax = cur_ymax
+        ax2.set_ylim(eval_ymin, eval_ymax)
 
     if title:
         ax1.set_title(title)
@@ -269,7 +315,16 @@ def main() -> None:
     print(f"Output figure: {output_path}")
 
     title = f"Training/eval loss vs step (steps_per_epoch={curves.steps_per_epoch:g})"
-    plot_loss_curves(curves, output_path=output_path, title=title, show=args.show)
+    plot_loss_curves(
+        curves,
+        output_path=output_path,
+        title=title,
+        show=args.show,
+        train_ymin=args.train_ymin,
+        train_ymax=args.train_ymax,
+        eval_ymin=args.eval_ymin,
+        eval_ymax=args.eval_ymax,
+    )
 
 
 if __name__ == "__main__":
