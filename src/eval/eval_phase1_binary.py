@@ -411,7 +411,9 @@ def wrap_with_lora(
 ) -> PreTrainedModel:
     from peft import PeftModel
 
+    print(f"[DEBUG] Loading LoRA adapter from {lora_dir}...", flush=True)
     model = PeftModel.from_pretrained(base_model, str(lora_dir))
+    print("[DEBUG] LoRA adapter loaded.", flush=True)
     if device is not None:
         model.to(device)
     model.eval()
@@ -439,9 +441,9 @@ def run_eval_for_model(
     example_buffer: List[Dict[str, str]] = []
 
     total = len(prompts)
-    print(f"Evaluating {model_tag} on {total} samples...")
+    print(f"Evaluating {model_tag} on {total} samples...", flush=True)
     if num_shards > 1:
-        print(f"Shard {shard_index + 1}/{num_shards}")
+        print(f"Shard {shard_index + 1}/{num_shards}", flush=True)
     start_time = time.time()
 
     for i, (prompt, true_label) in enumerate(zip(prompts, labels)):
@@ -468,7 +470,7 @@ def run_eval_for_model(
         pred_label = normalize_label(gen_text)
 
         if print_predictions > 0 and i < print_predictions:
-            print(f"  [{i}] true={true_label!r} pred={pred_label!r} output={gen_text!r}")
+            print(f"  [{i}] true={true_label!r} pred={pred_label!r} output={gen_text!r}", flush=True)
 
         try:
             y_t = label_to_int(true_label)
@@ -505,28 +507,31 @@ def run_eval_for_model(
             gpu_util = get_gpu_util()
             elapsed_h = elapsed / 3600
 
-            print(f"Processed {processed}/{total} | {rate:.2f} samples/s | GPU {gpu_util}% | elapsed {elapsed_h:.2f} h | ETA {eta:.2f} h")
+            print(
+                f"Processed {processed}/{total} | {rate:.2f} samples/s | GPU {gpu_util}% | elapsed {elapsed_h:.2f} h | ETA {eta:.2f} h",
+                flush=True,
+            )
         
         if (i + 1) % 10000 == 0:  # add intermediate metrics print every 10000 samples (walltime fallback measure)
             metrics_int = compute_binary_metrics(y_true_int, y_pred_int)
             n_used_int = len(y_true_int)
 
-            print(f"\n=== Results for {model_tag} at {i + 1} samples ===")
-            print(f"Used samples (after skipping UNKNOWN/invalid): {n_used_int}")
-            print(f"Accuracy:  {metrics_int['accuracy']:.4f}")
-            print(f"F1 (ATTACK): {metrics_int['f1_attack']:.4f}")
+            print(f"\n=== Results for {model_tag} at {i + 1} samples ===", flush=True)
+            print(f"Used samples (after skipping UNKNOWN/invalid): {n_used_int}", flush=True)
+            print(f"Accuracy:  {metrics_int['accuracy']:.4f}", flush=True)
+            print(f"F1 (ATTACK): {metrics_int['f1_attack']:.4f}", flush=True)
 
     metrics = compute_binary_metrics(y_true_int, y_pred_int)
     n_used = metrics["n_used"]
 
-    print(f"\n=== Results for {model_tag} ===")
+    print(f"\n=== Results for {model_tag} ===", flush=True)
     if num_shards > 1:
-        print(f"Shard {shard_index + 1}/{num_shards}")
-    print(f"Used samples (after skipping UNKNOWN/invalid): {n_used}")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"F1 (ATTACK): {metrics['f1_attack']:.4f}")
-    print(f"Precision (ATTACK): {metrics['precision']:.4f}")
-    print(f"Recall    (ATTACK): {metrics['recall']:.4f}")
+        print(f"Shard {shard_index + 1}/{num_shards}", flush=True)
+    print(f"Used samples (after skipping UNKNOWN/invalid): {n_used}", flush=True)
+    print(f"Accuracy:  {metrics['accuracy']:.4f}", flush=True)
+    print(f"F1 (ATTACK): {metrics['f1_attack']:.4f}", flush=True)
+    print(f"Precision (ATTACK): {metrics['precision']:.4f}", flush=True)
+    print(f"Recall    (ATTACK): {metrics['recall']:.4f}", flush=True)
     print(
         f"Counts: TP={metrics['tp']} FP={metrics['fp']} "
         f"FN={metrics['fn']} correct={metrics['correct']}"
@@ -542,17 +547,17 @@ def run_eval_for_model(
         "fp": metrics["fp"],
         "fn": metrics["fn"],
     }
-    print("METRICS_JSON:", json.dumps(summary))
+    print("METRICS_JSON:", json.dumps(summary), flush=True)
 
     if show_examples > 0 and example_buffer:
-        print("\n=== Example predictions (first few) ===")
+        print("\n=== Example predictions (first few) ===", flush=True)
         for idx, ex in enumerate(example_buffer[:show_examples], start=1):
-            print(f"\n--- Example {idx} ---")
-            print("True label:", ex["true"])
-            print("Pred label:", ex["pred"])
-            print("Raw generation:", repr(ex["gen"]))
-            print("\nPrompt:")
-            print(ex["prompt"])
+            print(f"\n--- Example {idx} ---", flush=True)
+            print("True label:", ex["true"], flush=True)
+            print("Pred label:", ex["pred"], flush=True)
+            print("Raw generation:", repr(ex["gen"]), flush=True)
+            print("\nPrompt:", flush=True)
+            print(ex["prompt"], flush=True)
 
 
 def main() -> None:
@@ -582,7 +587,7 @@ def main() -> None:
 
     # 1) Evaluate base model (if requested)
     if cfg.mode in ("base", "both"):
-        print("\n--- Loading base model ---")
+        print("\n--- Loading base model ---", flush=True)
         base_model = load_base_model(
             model_name=cfg.model_name,
             load_in_4bit=cfg.load_in_4bit,
@@ -608,13 +613,13 @@ def main() -> None:
     # 2) Evaluate LoRA‑fine‑tuned model (if requested)
     if cfg.mode in ("lora", "both"):
         assert cfg.lora_dir is not None
-        print("\n--- Loading base model for LoRA ---")
+        print("\n--- Loading base model for LoRA ---", flush=True)
         base_model_for_lora = load_base_model(
             model_name=cfg.model_name,
             load_in_4bit=cfg.load_in_4bit,
             device=cfg.device,
         )
-        print(f"--- Wrapping base model with LoRA from {cfg.lora_dir} ---")
+        print(f"--- Wrapping base model with LoRA from {cfg.lora_dir} ---", flush=True)
         lora_model = wrap_with_lora(
             base_model=base_model_for_lora,
             lora_dir=cfg.lora_dir,
