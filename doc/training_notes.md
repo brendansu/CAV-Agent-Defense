@@ -235,3 +235,138 @@
     - Adding evaluation metrics (message-level and event-level).
     - Scaling from debug JSONL to full `phase1_binary` JSONL and/or migrating to cluster (e.g., Palmetto).
 
+### Class-imbalanced loss & HPC debug training (2026-03-04–03-06)
+
+- **Objective**: move Phase 1 binary LoRA training from local 8GB GPU to Palmetto HPC, and make the loss more sensitive to rare ATTACK windows.
+- **Loss design (class-imbalanced)**:
+  - For **BENIGN** windows, keep standard causal LM loss on the **full sequence** (`labels = input_ids`).
+  - For **ATTACK** windows, compute loss **only on the answer token** (`BENIGN` / `ATTACK`) and multiply it by `answer_loss_weight_attack` (currently `3.0`).
+  - Implementation lives in:
+    - `CausalLMTrainer.compute_loss` in `src/training/train_lora_qwen_phase1_binary.py`
+    - `tokenize_function` / dataset pipeline in `src/training/dataset_phase1.py` (derives `is_attack` and length from `examples["output"]`).
+- **HPC debug runs (phase1_binary_debug)**:
+  - Config: `configs/qwen2.5_1.5b_phase1_binary_debug_hpc.yaml`
+    - `num_train_epochs` tuned from `0.2` → `0.5` to match ~1 hour wall time on A100 with `per_device_train_batch_size=4`, `gradient_accumulation_steps=2`.
+    - `max_eval_samples=1000` so each eval uses a deterministic prefix of the val set.
+  - Training scripts:
+    - `scripts/train_phase1_debug.slurm` (wall time currently `--time=02:00:00` for the 0.5 epoch run).
+  - Status:
+    - Two LoRA checkpoints have been fully trained on `phase1_binary_debug` (50k train / 5k val): **0.5 epoch** and **2.0 epoch** runs.
+    - Slurm logs live under `slurm/` (e.g. `train_debug_ep2.0_*.out`), and Trainer state is in `/scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-debug/`.
+    - Loss curves look healthy for 0.5 epoch (loss steadily decreasing; no obvious overfitting), motivating the longer 1.5–2.0 epoch run.
+
+### Evaluation pipeline on debug / full / 1-of-8 test
+
+- **Eval entry point**: `src/eval/eval_phase1_binary.py`
+  - Metrics: Accuracy + **F1(ATTACK)**, for both base model and LoRA (depending on `--mode`).
+  - Uses the same prompt template and `max_seq_len=1536` as training.
+- **Debug test eval (full debug JSONL)**:
+  - Slurm script: `scripts/eval_phase1_debug.slurm`
+    - Default `JSONL_DIR=data/processed/jsonl/phase1_binary_debug`
+    - `--split test`, `--mode both`, `--max_seq_len 1536`, `--max_samples 0` (all debug test windows).
+  - Used to sanity-check the effect of the new loss and additional epochs on the debug distribution.
+- **Full / 1-of-8 Phase 1 test eval**:
+  - Full test JSONL: `data/processed/jsonl/phase1_binary/test.jsonl` (~2.77M windows; too slow for frequent eval).
+  - **1-of-8 test subset**:
+    - Constructed as `data/processed/jsonl/phase1_binary_1of8/test.jsonl`, containing every 8th test window.
+    - Eval scripts switch between **full** and **1-of-8** by changing only `JSONL_DIR` while keeping `--split test`.
+  - Slurm eval scripts (1-of-8):
+    - `scripts/eval_phase1_1of8_base.slurm`
+    - `scripts/eval_phase1_1of8_lora_ep0_5.slurm`
+    - `scripts/eval_phase1_1of8_lora_ep2.slurm`
+  - Current status (2026-03-06):
+    - **Base**, **0.5 epoch LoRA**, and **2.0 epoch LoRA** models are all being evaluated on the **full test set** (and/or 1-of-8 subset) to measure F1(ATTACK) and generalization beyond the debug test.
+    - These results will drive the next decisions on:
+      - whether to adjust `answer_loss_weight_attack`,
+      - how many epochs to train on a fixed dataset size,
+      - and whether to scale data beyond the 50k debug subset.
+
+- **Additional HPC documentation**:
+  - `doc/hpc_migration_context.md`: environment, data layout, and Slurm basics on Palmetto.
+  - `doc/phase1_hpc_next_steps.md`: “after training” checklist (where to read logs, how to run eval, how to tune `answer_loss_weight_attack` based on F1(ATTACK)).
+
+### Phase 1 stratified subsets & ≈100k training dataset (2026-03-06)
+
+- **Goal**: move from the debug 50k train subset (first 50k lines) to a **more representative, stratified subset** of the full Phase 1 binary JSONL, while keeping training cost manageable.
+- **Subset builder script**: `src/data/build_phase1_subset.py`
+  - Purpose: stratified random sampling from large Phase 1 JSONL files.
+  - **Grouping key**:
+    - Each JSONL line is grouped by `(label, attacker_type_bucket)` where:
+      - `label = output` (`"BENIGN"` / `"ATTACK"`).
+      - `attacker_type_bucket` is derived from `input.attacker_type`:
+        - `None` / missing → `"NONE"`,
+        - integer → `"type_<int>"` (e.g. `"type_1"`),
+        - other values → `str(raw_value)`.
+    - This replaces the older per-pair grouping `(run_id, receiver_id, sender_id)` that made global fractions hard to control.
+  - **Sampling rule**:
+    - For each group `g` with size `n_g`, draw `k_g ≈ floor(n_g * keep_fraction)` indices uniformly at random.
+    - Because groups are now large pools by `(label, attacker_type)`, `keep_fraction` directly controls the *global* subset size, while preserving label + attacker_type distribution.
+  - **CLI (typical)**:
+    - Train:
+      ```bash
+      python -m src.data.build_phase1_subset \
+        --input  data/processed/jsonl/phase1_binary/train.jsonl \
+        --output data/processed/jsonl/phase1_binary_100k/train.jsonl \
+        --keep_fraction 0.00625 \
+        --seed 42
+      ```
+    - Val:
+      ```bash
+      python -m src.data.build_phase1_subset \
+        --input  data/processed/jsonl/phase1_binary/val.jsonl \
+        --output data/processed/jsonl/phase1_binary_100k/val.jsonl \
+        --keep_fraction 0.001 \
+        --seed 42
+      ```
+
+- **Val subset (completed)**:
+  - Source: full Phase 1 binary val (`~1.44M` windows).
+  - Command: `keep_fraction=0.001` on `val.jsonl`.
+  - Result:
+    - `Total lines kept ≈ 1,438` (≈0.1% of all val windows).
+    - Stratified across the 10 `(label, attacker_type)` groups.
+    - Saved to: `data/processed/jsonl/phase1_binary_100k/val.jsonl`.
+  - Intended use:
+    - Quick Phase 1 experiments and HPC debug runs where full 1.44M val is too heavy.
+    - Compatible with training-time eval (`max_eval_samples=1000`) which selects the first 1000 examples deterministically.
+
+- **Train subset (~100k, in progress)**:
+  - Source: full Phase 1 binary train (`~16M` windows, rough order-of-magnitude).
+  - Target: **≈100k train windows**, as a “medium-scale” dataset between:
+    - 50k debug subset (first 50k lines),
+    - and the full 16M train set.
+  - Strategy:
+    - Choose `keep_fraction ≈ 100_000 / N_train_full` (empirically around `0.00625` for `N_train_full ≈ 16M`).
+    - Run `build_phase1_subset.py` once on full train to produce:
+      - `data/processed/jsonl/phase1_binary_100k/train.jsonl`
+  - Experimental plan:
+    - First, train on the 100k subset (0.5–1.0 epoch) and evaluate on:
+      - debug test,
+      - 1-of-8 test subset,
+      - full test (as resources allow).
+    - Compare F1(ATTACK) against:
+      - the 50k-debug 0.5 epoch and 2.0 epoch LoRA runs,
+      - and the base model.
+    - If 100k clearly outperforms 50k, consider scaling to **200k** and later **500k** using the same stratified sampler; otherwise, treat 50k–100k as “data-saturated” for Phase 1 and focus on prompt / loss / model-side changes instead.
+
+### Loss & eval curve visualization (planned)
+
+- **Motivation**:
+  - Current inspection of training relies on `trainer_state.json` and Slurm `.out` logs.
+  - A dedicated plotting script will make it easier to compare:
+    - 0.5 vs 2.0 epoch runs on debug,
+    - 50k vs 100k vs larger subsets,
+    - different `answer_loss_weight_attack` settings.
+- **Planned approach**:
+  - Parse `slurm/*.out` and/or `trainer_state.json` to extract:
+    - step / epoch,
+    - training `loss`,
+    - `eval_loss` (on the 1000-example val subset),
+    - learning rate.
+  - Generate matplotlib (or similar) plots of:
+    - loss vs. step/epoch,
+    - eval_loss vs. step/epoch,
+    - optionally annotate key checkpoints and selected eval runs.
+- **Status (2026-03-06)**:
+  - Plotting script is being prototyped in a separate notebook / chat, focusing first on parsing existing `slurm/train_debug_ep*.out` files.
+  - Once stabilized, it should be referenced here with its file path (e.g. `src/analysis/plot_phase1_training_curves.py`) and a short “how to run” command.
