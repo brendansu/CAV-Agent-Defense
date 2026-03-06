@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override output_dir in config (optional).",
     )
+    parser.add_argument(
+        "--debug_subset",
+        action="store_true",
+        help="If set, train on a small shuffled subset of train/val for quick debugging.",
+    )
     return parser.parse_args()
 
 
@@ -181,6 +186,19 @@ def main() -> None:
         tokenizer=tokenizer,
         max_seq_len=max_seq_len,
     )
+
+    # 可选：debug 模式下只用一小部分样本，避免本地显存/时间压力过大
+    if args.debug_subset:
+        max_train = 50000   # 视本地资源情况可再调小
+        max_val = 5000
+
+        if len(train_ds) > max_train:
+            train_ds = train_ds.shuffle(seed=42).select(range(max_train))
+        if len(val_ds) > max_val:
+            val_ds = val_ds.shuffle(seed=42).select(range(max_val))
+
+        print(f"[DEBUG] Using {len(train_ds)} train and {len(val_ds)} val samples")
+
     print(f"Train dataset size: {len(train_ds)}")
     print(f"Val dataset size:   {len(val_ds)}")
 
