@@ -141,6 +141,12 @@ def build_training_arguments(
         f"warmup_steps={warmup_steps}"
     )
 
+    # ⬇️ 从 YAML 读取 eval / save 相关配置
+    eval_strategy = config.get("eval_strategy", "no")
+    eval_steps = int(config.get("eval_steps", 500))
+    save_strategy = config.get("save_strategy", "steps")
+    save_steps = int(config.get("save_steps", 500))
+
     args = TrainingArguments(
         output_dir=output_dir,
         per_device_train_batch_size=per_device_train_batch_size,
@@ -156,6 +162,13 @@ def build_training_arguments(
         bf16=False,
         gradient_checkpointing=True,
         report_to=config.get("report_to", []),
+        eval_strategy=eval_strategy,
+        eval_steps=eval_steps,
+        save_strategy=save_strategy,
+        save_steps=save_steps,
+        load_best_model_at_end=True,          # 可选
+        metric_for_best_model="eval_loss",    # 可选
+        greater_is_better=False,              # 可选
     )
     return args
 
@@ -165,13 +178,24 @@ class CausalLMTrainer(Trainer):
     自定义 Trainer，以确保在没有 labels 字段时也能根据 input_ids 计算 loss。
     """
 
-    def compute_loss(self, model, inputs, num_items_in_batch: int | None = None, **kwargs):
-        labels = inputs.get("labels", None)
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch: int | None = None,
+        **kwargs
+    ):
+        # 从 inputs 中取出 labels，避免 **inputs 里重复传 labels
+        labels = inputs.pop("labels", None)
         if labels is None:
             # 回退策略：labels 直接使用 input_ids（完整自回归监督）
             labels = inputs["input_ids"].clone()
         outputs = model(**inputs, labels=labels)
-        return outputs.loss
+        loss = outputs.loss
+        if return_outputs:  # 可选：返回 outputs 以便进一步分析
+            return loss, outputs
+        return loss
 
 
 def main() -> None:
@@ -220,13 +244,22 @@ def main() -> None:
     print(f"Train dataset size: {len(train_ds)}")
     print(f"Val dataset size:   {len(val_ds)}")
 
+    # 可选：仅使用 val 子集进行训练时的周期性 eval，以减少 eval 时间
+    max_eval_samples = int(config.get("max_eval_samples", 0))
+    if max_eval_samples > 0 and len(val_ds) > max_eval_samples:
+        eval_ds = val_ds.select(range(max_eval_samples))
+        print(f"Eval subset size:   {len(eval_ds)} (max_eval_samples={max_eval_samples})")
+    else:
+        eval_ds = val_ds
+        print("Eval subset size:   full validation set")
+
     # 构建 TrainingArguments 和 Trainer
     training_args = build_training_arguments(config, train_dataset_size=len(train_ds))
     trainer = CausalLMTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
+        eval_dataset=eval_ds,
     )
 
     # 训练

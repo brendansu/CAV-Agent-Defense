@@ -98,7 +98,7 @@
   - `model_name: Qwen/Qwen2.5-1.5B-Instruct`
   - `jsonl_dir: data/processed/jsonl/phase1_binary_debug`
   - `output_dir: outputs/qwen2.5-1.5b-phase1-binary-debug`
-  - `max_seq_len: 512`
+  - `max_seq_len: 1536` (see prompt-length debugging notes below)
   - `learning_rate: 1e-4`
   - `num_train_epochs: 1.0` (for debug, can be reduced, e.g. 0.1–0.2)
   - `per_device_train_batch_size: 1`
@@ -135,6 +135,79 @@
     - `warmup_steps`
     - `logging_steps`, `save_total_limit`
     - `fp16=True`, `gradient_checkpointing=True`
+
+### Prompt length / max_seq_len debugging (2026-03-03)
+
+- **Symptom (evaluation looked like message continuation instead of prediction)**:
+  - When evaluating on the debug JSONL (both base and LoRA models), the model outputs looked like:
+    - `', claimed_pos=[3587.658'`, `'667871411327'`, `'s: sender=109, claimed_pos=[3'`, etc.
+  - All predictions were parsed as `UNKNOWN`, so `Used samples (after skipping UNKNOWN/invalid)` was 0 and metrics were 0.
+  - Hypothesis: the model was only seeing truncated message history and never the `Answer:` instruction, so it was just continuing the last line of the history instead of answering BENIGN/ATTACK.
+
+- **Diagnosis 1: eval-side instrumentation**:
+  - In `src/eval/eval_phase1_binary.py`, added:
+    - Per-sample logging/printing of:
+      - `prompt_tokens` (tokenized length of the prompt),
+      - `truncated` flag (whether `prompt_tokens >= max_seq_len`),
+      - `prompt_tail` (last ~500 chars of the full prompt).
+  - With `max_seq_len=512`:
+    - For the first few test samples: `prompt_tokens=512 (truncated=True, max_seq_len=512)`.
+    - `prompt_tail` (raw string) contained:
+      - `Answer with only one token: BENIGN or ATTACK.\nAnswer: <LABEL>`.
+    - But the model-facing text (after tokenization and truncation) **did not** end with `Answer:`.
+  - Conclusion:
+    - `prompt_tail` is just for human inspection; tokenizer truncation keeps the **first** `max_seq_len` tokens.
+    - With `max_seq_len=512`, the `Answer:` line is completely cut off in the model input, explaining why the model keeps emitting message fragments instead of labels.
+
+- **Diagnosis 2: tokenizer-only checker (`tokenizer_eval.py`)**:
+  - Added `src/training/tokenizer_eval.py`:
+    - Reads the same YAML as training (`--config`).
+    - Uses `Phase1DatasetConfig`, `load_raw_phase1_splits`, and `build_phase1_prompt` to build the exact training prompts.
+    - Tokenizes prompts with `truncation=True, max_length=max_seq_len`.
+    - For a small number of samples (default 8), prints:
+      - Char length, token count, `truncated` flag.
+      - Whether the raw `prompt` tail contains `"Answer:"`.
+      - Whether the **decoded, truncated** text (what the model actually sees) ends with `"Answer:"`.
+      - The tail of both raw prompt and decoded/truncated prompt.
+  - Results:
+    - With `max_seq_len=512`:
+      - `Truncated: 8 / 8`, `Max token count: 512`.
+      - Raw prompts all ended with `Answer: <LABEL>`, but decoded/truncated text did **not** have `Answer:` for any sample.
+    - With `max_seq_len=1024`:
+      - Still `Truncated: 8 / 8`, `Max token count: 1024`.
+      - Decoded prompts still did not end with `Answer:`.
+    - With `max_seq_len=1536`:
+      - `Truncated: 0 / 8`, `Max token count: 1048`.
+      - For all checked samples, the decoded/truncated prompt tails now **include** the `Answer:` line.
+  - Conclusion:
+    - Typical Phase 1 prompts with 10-message windows and full numeric precision are around ~1050 tokens.
+    - `max_seq_len=1536` leaves comfortable headroom above the observed max (1048), and for the checked batch there is **no prompt truncation**.
+
+- **Prompt numeric precision optimization (to help context efficiency)**:
+  - The original prompt used raw floats like:
+    - `claimed_pos=[3587.658379958466, 5834.075148962773]`
+    - `rssi=1.701623176387148e-08`
+  - This is quite token-inefficient and obscures the essential physics.
+  - In `src/training/dataset_phase1.py`:
+    - Introduced helpers `_fmt_num`, `_fmt_list`, `_fmt_rssi` to format:
+      - `pos` / `ego_pos` (m) and `spd` / `ego_spd` (m/s) with **2 decimal places**:
+        - e.g. `claimed_pos=[3587.66,5834.08]`, `ego_spd=[-0.03,32.41]`.
+      - `rssi` with **2 significant figures** in either fixed or scientific notation:
+        - e.g. `rssi=1.70e-08`.
+      - `dt` with **2 decimal places** (`t-7.00s` instead of `t-7.00000058536898s`).
+    - This reduces prompt length (fewer numeric tokens) while keeping physically meaningful resolution (cm-level for position, 0.01 m/s, 0.01 s).
+  - The precision optimization plus increased `max_seq_len` help ensure that:
+    - The full 10-message history window **and** the `Answer:` instruction fit into the model context.
+
+- **Current status (after fixes)**:
+  - Debug YAML now uses `max_seq_len: 1536`.
+  - `tokenizer_eval.py` with this config:
+    - Reports `Truncated: 0 / 8`, `Max token count: 1048`.
+    - All decoded prompts (what the model sees) end with `"Answer: <LABEL>"`.
+  - Both training and evaluation now:
+    - Use the same prompt template with controlled numeric precision.
+    - Use a sequence length that empirically avoids prompt truncation on debug data.
+  - Based on this, Phase 1 debug training has been **restarted** with the updated `dataset_phase1.py` and `max_seq_len=1536`.
 
 ### Verified debug run status (RTX 2080 Max-Q, 8GB)
 

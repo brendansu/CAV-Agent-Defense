@@ -2,10 +2,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from datasets import Dataset, load_dataset
 from transformers import PreTrainedTokenizerBase
+
+
+# --- Precision by physical quantity (units and token trade-off) ---
+# pos, ego_pos: [x, y] in m  → 2 decimals (cm-level).
+# spd, ego_spd: [vx, vy] in m/s  → 2 decimals.
+# rssi: linear scale, often ~1e-8  → 2 significant figures (relative level matters).
+# dt: seconds, formatted in loop as +.2f (0.01 s).
+
+
+def _fmt_num(x: Any, decimals: int = 1) -> str:
+    """Format a single number with limited precision (used by _fmt_*_list)."""
+    if x is None:
+        return "-"
+    try:
+        v = float(x)
+        if abs(v) >= 0.01 and abs(v) < 1e6:
+            return f"{v:.{decimals}f}"
+        return f"{v:.2e}"
+    except (TypeError, ValueError):
+        return str(x)
+
+
+def _fmt_list(lst: Any, decimals: int = 1) -> str:
+    """Format a list [a, b] with given decimal places (for pos/spd in m, m/s)."""
+    if lst is None or (isinstance(lst, list) and len(lst) == 0):
+        return "-"
+    if not isinstance(lst, (list, tuple)):
+        return _fmt_num(lst, decimals)
+    parts = [_fmt_num(v, decimals) for v in lst]
+    return "[" + ",".join(parts) + "]"
+
+
+def _fmt_rssi(x: Any) -> str:
+    """RSSI (linear, often ~1e-8): 2 significant figures; relative level matters for detection."""
+    if x is None:
+        return "-"
+    try:
+        v = float(x)
+        if v == 0:
+            return "0"
+        if abs(v) >= 0.01 and abs(v) < 1000:
+            return f"{v:.2f}"
+        return f"{v:.2e}"
+    except (TypeError, ValueError):
+        return str(x)
 
 
 @dataclass
@@ -85,11 +130,18 @@ def build_phase1_prompt(example: dict) -> str:
         ego_pos = ego.get("pos", [None, None])
         ego_spd = ego.get("spd", [None, None])
 
+        # Quantity-aware precision: pos/ego_pos (m) and spd/ego_spd (m/s) → 2 decimals; rssi → 2 sigfigs; dt → .2f s
+        pos_s = _fmt_list(pos, decimals=2)
+        spd_s = _fmt_list(spd, decimals=2)
+        ego_pos_s = _fmt_list(ego_pos, decimals=2)
+        ego_spd_s = _fmt_list(ego_spd, decimals=2)
+        rssi_s = _fmt_rssi(rssi)
+
         lines.append(
-            f"t{dt:+.1f}s: sender={snd}, "
-            f"claimed_pos={pos}, claimed_spd={spd}, "
-            f"ego_pos={ego_pos}, ego_spd={ego_spd}, "
-            f"rssi={rssi}"
+            f"t{dt:+.2f}s: sender={snd}, "
+            f"claimed_pos={pos_s}, claimed_spd={spd_s}, "
+            f"ego_pos={ego_pos_s}, ego_spd={ego_spd_s}, "
+            f"rssi={rssi_s}"
         )
 
     lines.append("")
