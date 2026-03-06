@@ -1,29 +1,33 @@
 from __future__ import annotations
 
 """
-Utility script to build a stratified subset of the Phase 1 binary TEST JSONL.
+Utility script to build a stratified subset of the Phase 1 binary JSONL
+(train/val/test), mainly for faster experiments and scaling studies.
 
 Goal:
-- Starting from a large test JSONL (e.g. ~2.77M windows, ~8GB),
-  create a smaller, stratified subset suitable for faster evaluation runs.
+- Starting from a large Phase 1 JSONL (e.g. full train/val/test),
+  create a smaller, stratified subset suitable for quicker training/eval.
 
-Stratification strategy:
-- Group samples by (run_id, receiver_id, sender_id).
+Stratification strategy (coarse):
+- Group samples by (label, attacker_type), where:
+  - label       = JSONL field `output` ("BENIGN" or "ATTACK")
+  - attacker_type = JSONL field `input.attacker_type`
+    (None / NaN grouped into a single bucket)
 - For each group with `n` samples, keep
 
       k = max(1, floor(n * keep_fraction))
 
   samples, selected uniformly at random (without replacement).
-- This preserves coverage across:
-  - all runs,
-  - all (receiver, sender) pairs within each run,
+- This approximately preserves:
+  - global BENIGN/ATTACK proportion
+  - attacker_type distribution within each label
   while reducing the overall size by roughly `keep_fraction` globally.
 
 Typical usage (from repo root):
 
-    python -m src.data.build_test_subset \\
-        --input data/processed/jsonl/phase1_binary/test.jsonl \\
-        --output data/processed/jsonl/phase1_binary/test_subset_1of8.jsonl \\
+    python -m src.data.build_phase1_subset \\
+        --input  data/processed/jsonl/phase1_binary/train.jsonl \\
+        --output data/processed/jsonl/phase1_binary_1of8/train.jsonl \\
         --keep_fraction 0.125 \\
         --seed 42
 
@@ -40,19 +44,23 @@ from typing import DefaultDict, Dict, List, Tuple
 import numpy as np
 
 
-GroupKey = Tuple[str, int, int]  # (run_id, receiver_id, sender_id)
+# (label, attacker_type_bucket)
+# e.g. ("BENIGN", "NONE"), ("ATTACK", "type_1")
+GroupKey = Tuple[str, str]
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Build a stratified subset of Phase1 binary TEST JSONL "
-        "by sampling roughly keep_fraction per (run_id, receiver_id, sender_id) group."
+        description=(
+            "Build a stratified subset of Phase1 binary JSONL by sampling roughly "
+            "keep_fraction per (label, attacker_type) group."
+        )
     )
     ap.add_argument(
         "--input",
         type=str,
         required=True,
-        help="Path to input TEST JSONL (e.g. data/processed/jsonl/phase1_binary/test.jsonl).",
+        help="Path to input JSONL (e.g. data/processed/jsonl/phase1_binary/test.jsonl).",
     )
     ap.add_argument(
         "--output",
@@ -79,7 +87,11 @@ def build_group_index(input_path: Path) -> Tuple[int, DefaultDict[GroupKey, List
     """
     First pass over the JSONL:
     - Count total number of lines.
-    - Build mapping from (run_id, receiver_id, sender_id) -> list of line indices.
+    - Build mapping from (label, attacker_type_bucket) -> list of line indices.
+
+    label  : obj['output'] ("BENIGN"/"ATTACK"/other)
+    atk_type_bucket: derived from obj['input']['attacker_type'], with None/NaN mapped
+                     to a single bucket ("NONE").
     """
     groups: DefaultDict[GroupKey, List[int]] = defaultdict(list)
     total_lines = 0
@@ -99,15 +111,27 @@ def build_group_index(input_path: Path) -> Tuple[int, DefaultDict[GroupKey, List
                 print(f"[warning] JSON decode error at line {idx}: {e}")
                 continue
 
+            # Label from top-level 'output' field (e.g. "BENIGN" / "ATTACK")
+            label_raw = obj.get("output", "UNKNOWN")
+            label = str(label_raw)
+
+            # Attacker type from input.attacker_type; None/NaN grouped into "NONE"
             inp = obj.get("input", {})
-            run_id = str(inp.get("run_id"))
-            receiver_id = int(inp.get("receiver_id"))
-            sender_id = int(inp.get("sender_id"))
-            key: GroupKey = (run_id, receiver_id, sender_id)
+            atk_raw = inp.get("attacker_type", None)
+            if atk_raw is None:
+                atk_bucket = "NONE"
+            else:
+                # attacker_type typically numeric; fall back to string if not
+                try:
+                    atk_bucket = f"type_{int(atk_raw)}"
+                except (TypeError, ValueError):
+                    atk_bucket = str(atk_raw)
+
+            key: GroupKey = (label, atk_bucket)
             groups[key].append(idx)
 
     print(f"[index] Done. Total lines seen: {total_lines:,}")
-    print(f"[index] Number of (run_id, receiver_id, sender_id) groups: {len(groups):,}")
+    print(f"[index] Number of (label, attacker_type) groups: {len(groups):,}")
     return total_lines, groups
 
 
