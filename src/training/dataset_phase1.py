@@ -179,7 +179,8 @@ def tokenize_function(
     encoded["labels"] = encoded["input_ids"]
     # 答案 token 为每句最后一个 token；length 供 collate 后定位答案位置
     encoded["length"] = [len(ids) for ids in encoded["input_ids"]]
-    encoded["is_attack"] = examples["is_attack"]
+    # 从 output 列派生 is_attack（第一轮 map 的 is_attack 可能未写入 dataset，此处保证有值）
+    encoded["is_attack"] = [1 if (o == "ATTACK") else 0 for o in examples["output"]]
     return encoded
 
 
