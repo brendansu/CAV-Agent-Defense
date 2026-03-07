@@ -109,7 +109,8 @@ def setup_tokenizer_and_model(
             trainable += numel
     print(
         f"Trainable params: {trainable} / {total} "
-        f"({100 * trainable / max(1,total):.2f}%)"
+        f"({100 * trainable / max(1,total):.2f}%)",
+        flush=True,
     )
 
     return tokenizer, model
@@ -139,7 +140,8 @@ def build_training_arguments(
     print(
         f"Estimated steps_per_epoch={steps_per_epoch}, "
         f"total_training_steps={total_training_steps}, "
-        f"warmup_steps={warmup_steps}"
+        f"warmup_steps={warmup_steps}",
+        flush=True,
     )
 
     # ⬇️ 从 YAML 读取 eval / save 相关配置
@@ -266,8 +268,8 @@ def main() -> None:
         ["q_proj", "k_proj", "v_proj", "o_proj"],
     )
 
-    print("Loaded config:")
-    print(json.dumps(config, indent=2))
+    print("Loaded config:", flush=True)
+    print(json.dumps(config, indent=2), flush=True)
 
     # 一些 CUDA 性能/数值设置
     if torch.cuda.is_available():
@@ -289,17 +291,17 @@ def main() -> None:
         max_seq_len=max_seq_len,
     )
 
-    print(f"Train dataset size: {len(train_ds)}")
-    print(f"Val dataset size:   {len(val_ds)}")
+    print(f"Train dataset size: {len(train_ds)}", flush=True)
+    print(f"Val dataset size:   {len(val_ds)}", flush=True)
 
     # 可选：仅使用 val 子集进行训练时的周期性 eval，以减少 eval 时间
     max_eval_samples = int(config.get("max_eval_samples", 0))
     if max_eval_samples > 0 and len(val_ds) > max_eval_samples:
         eval_ds = val_ds.select(range(max_eval_samples))
-        print(f"Eval subset size:   {len(eval_ds)} (max_eval_samples={max_eval_samples})")
+        print(f"Eval subset size:   {len(eval_ds)} (max_eval_samples={max_eval_samples})", flush=True)
     else:
         eval_ds = val_ds
-        print("Eval subset size:   full validation set")
+        print("Eval subset size:   full validation set", flush=True)
 
     # 构建 TrainingArguments 和 Trainer
     training_args = build_training_arguments(config, train_dataset_size=len(train_ds))
@@ -316,7 +318,7 @@ def main() -> None:
     trainer.train()
     trainer.save_model(training_args.output_dir)
     tokenizer.save_pretrained(training_args.output_dir)
-    print(f"Training complete. Model saved to {training_args.output_dir}")
+    print(f"Training complete. Model saved to {training_args.output_dir}", flush=True)
 
 
 if __name__ == "__main__":
