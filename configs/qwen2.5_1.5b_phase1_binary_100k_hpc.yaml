@@ -1,0 +1,49 @@
+# HPC (Palmetto) config for Phase 1 binary 100k stratified training.
+# - Replace YOUR_USERNAME with your Palmetto username (e.g. haotias) in jsonl_dir and output_dir.
+# - Data: jsonl_dir must contain train.jsonl, val.jsonl. The loader also expects test.jsonl (e.g. copy val.jsonl or add a minimal file if you only use train/val for training).
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+# Phase 1 binary 100k: paths on scratch (directory must contain train.jsonl, val.jsonl)
+jsonl_dir: /scratch/YOUR_USERNAME/veremi_agent/data/phase1_binary_100k
+output_dir: /scratch/YOUR_USERNAME/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-100k
+
+# Tokenization / sequence length
+max_seq_len: 1536
+
+# Optimizer / schedule (unchanged from debug: effective batch 8, lr 1e-4, warmup 3% — suitable for 100k 1 epoch)
+learning_rate: 1.0e-4
+# 100k samples, effective batch 8 => 12500 steps/epoch; 1 epoch ~5–6 h on A100
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+
+# Batch / accumulation (same as debug: A100 显存富余，有效 batch=8)
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 2
+
+# Logging / eval / checkpoints (12500 steps/epoch => eval/save every 500 ≈ 25 times per epoch)
+logging_steps: 100
+eval_strategy: steps
+eval_steps: 500
+# 0 = use full val set (100k val is small enough to eval on all)
+max_eval_samples: 0
+save_strategy: steps
+save_steps: 500
+save_total_limit: 2
+
+# Class-weighted answer loss (ATTACK 样本仅答案位置 loss × 该系数；0 = 关闭)
+answer_loss_weight_attack: 3.0
+
+# LoRA config
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+
+# Reporting (empty list => no external loggers)
+report_to: []
