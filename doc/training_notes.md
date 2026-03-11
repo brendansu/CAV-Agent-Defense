@@ -370,3 +370,62 @@
 - **Status (2026-03-06)**:
   - Plotting script is being prototyped in a separate notebook / chat, focusing first on parsing existing `slurm/train_debug_ep*.out` files.
   - Once stabilized, it should be referenced here with its file path (e.g. `src/analysis/plot_phase1_training_curves.py`) and a short “how to run” command.
+
+### Phase 1 100k stratified subset training & 1-of-8 test eval (2026-03-07)
+- **100k stratified train/val 子集（已实现）**：
+  - 目录（HPC scratch）：`/scratch/$USER/veremi_agent/data/phase1_binary_100k/`
+    - `train.jsonl`：基于 full Phase 1 train（~16M 窗口），按 `(label, attacker_type)` 分层采样得到 ≈100k 窗口。
+    - `val.jsonl`：此前已从 full val 分层采样得到 ≈1.4k 窗口。
+    - `test.jsonl`：当前用于满足 loader 要求，可是占位文件（训练只实际使用 train/val）。
+  - 构造方式：使用 `src/data/build_phase1_subset.py`，按 `(label, attacker_type)` 分组后，对每组按相同 `keep_fraction` 采样，保证整体 label + attacker_type 分布稳定。
+- **HPC 100k 训练配置（1 epoch）**：
+  - YAML：`qwen2.5_1.5b_phase1_binary_100k_hpc.yaml`（HPC 上的实际使用版本存放在 `$HOME/veremi_agent_local/`，避免用户名进 Git）。
+    - `jsonl_dir: /scratch/$USER/veremi_agent/data/phase1_binary_100k`
+    - `output_dir: /scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-phase1-binary-100k`
+    - `max_seq_len: 1536`
+    - `learning_rate: 1e-4`
+    - `num_train_epochs: 1.0`
+    - `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2`（effective batch=8）
+    - `logging_steps: 100`
+    - `eval_strategy: steps`, `eval_steps: 500`
+    - `max_eval_samples: 0`（val 不大，eval 用全量）
+    - `answer_loss_weight_attack: 3.0`
+    - LoRA 配置同 debug：`lora_r=16, lora_alpha=32, lora_dropout=0.05, target_modules=[q_proj,k_proj,v_proj,o_proj]`
+  - Slurm：`scripts/train_phase1_100k.slurm`
+    - 单卡 A100、`--time=08:00:00`。
+    - 通过环境变量 `CONFIG`（默认 `$HOME/veremi_agent_local/qwen2.5_1.5b_phase1_binary_100k_hpc.yaml`）加载配置，避免仓库内 YAML 暴露真实用户名。
+    - 实测：1 epoch（约 12.5k steps）训练时间 ~5–6 小时级。
+- **1-of-8 test 上的 base / debug LoRA / 100k LoRA 对比（global metrics，ATTACK 为正类）**：
+  - 评估集：`data/processed/jsonl/phase1_binary_1of8/test.jsonl`，约 35 万窗口。
+  - 评估脚本：`src/eval/eval_phase1_binary.py`，使用 `--num_shards 8` 在 8 个 shard 上并行；每个 shard 输出 `METRICS_JSON`，再用 `src/eval/metric_integration.py` 聚合。
+  - Slurm eval 脚本：
+    - `scripts/eval_phase1_1of8_base.slurm` → `eval_1of8_base_%A_%a.out`
+    - `scripts/eval_phase1_1of8_lora_ep0_5.slurm` → `eval_1of8_lora05ep_%A_%a.out`（50k debug, 0.5 epoch）
+    - `scripts/eval_phase1_1of8_lora_ep2.slurm` → `eval_1of8_lora2ep_%A_%a.out`（50k debug, 2.0 epoch）
+    - `scripts/eval_phase1_1of8_100klora1ep.slurm`（命名示意） → `eval_1of8_100klora1ep_%A_%a.out`（100k stratified, 1 epoch）
+  - 指标汇总（使用 `python -m src.eval.metric_integration --dataset_id 1of8 --model_id <model_id> --slurm_dir slurm`）：
+    - **base**（`model_id=base`）：
+      - Accuracy ≈ 0.173
+      - Precision(ATTACK) ≈ 0.173，Recall(ATTACK) = 1.0，F1(ATTACK) ≈ 0.295
+      - 行为：几乎把所有样本都预测为 ATTACK（TP 很大，FN=0，但 FP 巨大）。
+    - **50k debug, 0.5 epoch LoRA**（`model_id=lora05ep`）：
+      - F1(ATTACK) ≈ 0.383
+      - Precision(ATTACK) ≈ 0.999，Recall(ATTACK) ≈ 0.237
+      - 行为：非常保守的 ATTACK 预测，几乎没有误报但漏报较多。
+    - **50k debug, 2.0 epoch LoRA**（`model_id=lora2ep`）：
+      - F1(ATTACK) ≈ 0.323
+      - Precision(ATTACK) ≈ 0.998，Recall(ATTACK) ≈ 0.192
+      - 行为：比 0.5 epoch 更保守，Recall 进一步下降，F1 反而更差，提示在 50k 上继续加 epoch 倾向于 overfit/debug-distribution。
+    - **100k stratified, 1 epoch LoRA**（`model_id=100klora1ep`）：
+      - **Accuracy ≈ 0.966**
+      - **Precision(ATTACK) ≈ 0.982**
+      - **Recall(ATTACK) ≈ 0.816**
+      - **F1(ATTACK) ≈ 0.891**
+      - 行为：在保证高 precision 的同时显著提高了 Recall（≈0.82），F1 提升非常明显，说明在更大、按 label+attacker_type 分层抽样的 100k 数据上训练 1 epoch 有效改善了对 ATTACK 的识别。
+- **阶段性结论**：
+  - Base 模型在该任务上的默认行为极端（几乎全判 ATTACK），precision 和 accuracy 都偏低。
+  - 仅在 50k debug 上训练（0.5–2.0 epoch）可以把 precision 拉到接近 1，但 Recall 仍偏低，F1 在 0.3–0.4 范围，且 2.0 epoch 相比 0.5 epoch 并无收益。
+  - 引入 **100k 规模、按 (label, attacker_type) 分层的 train 子集** 并训练 1 epoch 后，在 1-of-8 test 上：
+    - F1(ATTACK) 从 ~0.38 提升到 ~0.89；
+    - Recall(ATTACK) 从 ~0.24 提升到 ~0.82，且保持高 precision。
+  - 这说明在当前 Phase 1 设定下，**数据规模与分层采样质量** 对攻击检测性能的提升非常关键；在 100k 级别上已经能显著超越 base 和 50k debug 上的 LoRA。
