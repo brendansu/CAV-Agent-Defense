@@ -4,14 +4,15 @@
 #SBATCH --time=12:00:00
 #SBATCH --mem=32gb
 #SBATCH --cpus-per-task=8
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=/home/%u/veremi_collusion/slurm/ep_build_%x_%j.out
+#SBATCH --error=/home/%u/veremi_collusion/slurm/ep_build_%x_%j.err
 #
 # Build episode JSONL for a single VeReMi run directory.
 #
 # Usage examples:
-#   sbatch --export=RUN_DIR=data/raw/GridSybil_0709/VeReMi_25200_28800_2025-11-15_13_57_9 scripts/build_episode_run.slurm
-#   sbatch --export=RUN_DIR=data/raw/GridSybil_0709/VeReMi_28800_32400_2025-11-15_13_57_9,OUT_DIR=data/processed/episodes_gridsybil_v2 scripts/build_episode_run.slurm
+#   mkdir -p $HOME/veremi_collusion/slurm
+#   sbatch --export=ALL,RUN_DIR=data/raw/GridSybil_0709/VeReMi_25200_28800_2025-11-15_13_57_9 scripts/build_episode_run.slurm
+#   sbatch --export=ALL,RUN_DIR=data/raw/GridSybil_0709/VeReMi_28800_32400_2025-11-15_13_57_9,OUT_DIR=data/processed/episodes_gridsybil_v2 scripts/build_episode_run.slurm
 #
 # Optional exports:
 #   WORK_DIR        default: $HOME/veremi_collusion
@@ -25,6 +26,7 @@
 #   PROGRESS_EVERY  default: 50
 
 set -euo pipefail
+export SLURM_EXPORT_ENV=ALL
 
 RUN_DIR="${RUN_DIR:-}"
 WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
@@ -55,7 +57,10 @@ echo "WORK_DIR=$WORK_DIR"
 echo "RUN_DIR=$RUN_DIR"
 echo "OUT_DIR=$OUT_DIR"
 
-srun python -m src.data.episode_builder \
+PYTHON_BIN="$(which python)"
+echo "PYTHON_BIN=$PYTHON_BIN"
+
+srun --export=ALL "$PYTHON_BIN" -m src.data.episode_builder \
   --run_dir "$RUN_DIR" \
   --out_dir "$OUT_DIR" \
   --window_sec "$WINDOW_SEC" \
