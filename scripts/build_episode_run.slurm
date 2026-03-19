@@ -46,6 +46,9 @@ module load anaconda3/2023.09-0
 source "$(conda info --base)/etc/profile.d/conda.sh"
 source activate veremi
 
+echo "which python: $(which python)"
+echo "which python3: $(which python3)"
+
 cd "$WORK_DIR"
 
 echo "WORK_DIR=$WORK_DIR"
