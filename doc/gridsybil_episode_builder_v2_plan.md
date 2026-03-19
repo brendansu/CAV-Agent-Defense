@@ -59,7 +59,6 @@ Keep current metadata:
 Add source/regime indicators:
 
 - `attack_type`
-- `source_folder`
 - `traffic_regime`
 
 Notes:
@@ -445,9 +444,10 @@ This v2 implementation is complete when:
 1. `episode_builder.py` builds upgraded `GridSybil` episodes successfully
 2. clustering uses `temporal_iou` as a thresholded criterion
 3. heading is included in embeddings but not in clustering
-4. label schema matches the approved Phase 1 plan
-5. stdout progress is helpful and lightweight
-6. a smoke test completes successfully and output structure looks correct
+4. `pseudo_tracks` is optional and disabled by default
+5. label schema matches the approved Phase 1 plan
+6. stdout progress is helpful and lightweight
+7. a smoke test completes successfully and output structure looks correct
 
 ---
 

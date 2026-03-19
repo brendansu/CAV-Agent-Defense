@@ -361,7 +361,6 @@ def build_episode(
     receiver_id: int,
     attack_flag: int,
     attack_type: str,
-    source_folder: str,
     traffic_regime: str,
     window_start: float,
     window_end: float,
@@ -370,6 +369,7 @@ def build_episode(
     pos_cluster_thr: float = 80.0,
     spd_cluster_thr: float = 5.0,
     time_cluster_thr: float = 0.2,
+    include_pseudo_tracks: bool = False,
 ) -> Optional[Dict]:
     """Build one episode from *records* within ``[window_start, window_end]``."""
     window_dur = window_end - window_start
@@ -435,7 +435,7 @@ def build_episode(
         default=None,
     )
 
-    macro = {
+    group_summary = {
         "low_speed_fraction": region["slow_msg_fraction"],
         "congestion_level": (
             "high" if region["slow_msg_fraction"] > 0.6
@@ -476,6 +476,8 @@ def build_episode(
                 sybil_pseudos.add(pseudo)
 
     attacker_vehicle_ids = sorted(set(attacker_vehicle_ids))
+    # `attacker_vehicle_ids` is retained for analysis / evaluation only and
+    # should not be surfaced to the model when prompts are built later.
     label = {
         "contains_sybil_attacker": len(attacker_vehicle_ids) > 0,
         "num_attacker_vehicles": len(attacker_vehicle_ids),
@@ -490,7 +492,6 @@ def build_episode(
         "meta": {
             "run_id": run_id,
             "attack_type": attack_type,
-            "source_folder": source_folder,
             "traffic_regime": traffic_regime,
             "receiver_id": receiver_id,
             "receiver_is_attacker": attack_flag != 0,
@@ -503,11 +504,12 @@ def build_episode(
         },
         "ego": ego,
         "region": region,
-        "pseudo_tracks": {str(k): v for k, v in pseudo_tracks.items()},
         "pseudo_groups": pseudo_groups,
-        "macro": macro,
+        "group_summary": group_summary,
         "label": label,
     }
+    if include_pseudo_tracks:
+        episode["pseudo_tracks"] = {str(k): v for k, v in pseudo_tracks.items()}
     return _round_floats(episode, p=precision)
 
 
@@ -517,7 +519,6 @@ def episodes_from_receiver(
     trace_path: Path,
     run_id: str,
     attack_type: str,
-    source_folder: str,
     traffic_regime: str,
     gt_info: Optional[Dict] = None,
     window_sec: float = 10.0,
@@ -526,6 +527,7 @@ def episodes_from_receiver(
     pos_cluster_thr: float = 80.0,
     spd_cluster_thr: float = 5.0,
     time_cluster_thr: float = 0.2,
+    include_pseudo_tracks: bool = False,
 ) -> List[Dict]:
     """Slide a window over one receiver file and yield episodes."""
     meta = parse_trace_filename(trace_path.name)
@@ -546,7 +548,6 @@ def episodes_from_receiver(
             receiver_id=meta["vehicle_id"],
             attack_flag=meta["attack_flag"],
             attack_type=attack_type,
-            source_folder=source_folder,
             traffic_regime=traffic_regime,
             window_start=ws,
             window_end=we,
@@ -555,6 +556,7 @@ def episodes_from_receiver(
             pos_cluster_thr=pos_cluster_thr,
             spd_cluster_thr=spd_cluster_thr,
             time_cluster_thr=time_cluster_thr,
+            include_pseudo_tracks=include_pseudo_tracks,
         )
         if episode is not None:
             episodes.append(episode)
@@ -578,6 +580,7 @@ def process_run(
     spd_cluster_thr: float = 5.0,
     time_cluster_thr: float = 0.2,
     progress_every: int = 50,
+    include_pseudo_tracks: bool = False,
 ) -> Dict[str, int]:
     """Process every receiver trace in *run_dir*, append episodes to *out_path*."""
     gt_files = list(run_dir.glob("traceGroundTruthJSON-*.json"))
@@ -608,7 +611,6 @@ def process_run(
                 trace_file,
                 run_id,
                 attack_type=attack_type,
-                source_folder=run_dir.parent.name,
                 traffic_regime=traffic_regime,
                 gt_info=gt_info,
                 window_sec=window_sec,
@@ -617,6 +619,7 @@ def process_run(
                 pos_cluster_thr=pos_cluster_thr,
                 spd_cluster_thr=spd_cluster_thr,
                 time_cluster_thr=time_cluster_thr,
+                include_pseudo_tracks=include_pseudo_tracks,
             )
             for episode in episodes:
                 fout.write(json.dumps(episode, ensure_ascii=False) + "\n")
@@ -643,7 +646,18 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Build episode-level JSONL from VeReMi GridSybil traceJSON files.",
     )
-    ap.add_argument("--raw_dir", type=str, required=True, help="Attack-type folder, e.g. data/raw/GridSybil_0709")
+    ap.add_argument(
+        "--raw_dir",
+        type=str,
+        default=None,
+        help="Attack-type folder containing VeReMi_* runs, e.g. data/raw/GridSybil_0709",
+    )
+    ap.add_argument(
+        "--run_dir",
+        type=str,
+        default=None,
+        help="Single VeReMi_* run directory containing traceGroundTruthJSON-* and traceJSON-* files",
+    )
     ap.add_argument("--out_dir", type=str, default="data/processed/episodes")
     ap.add_argument("--window_sec", type=float, default=10.0)
     ap.add_argument("--step_sec", type=float, default=5.0)
@@ -653,18 +667,37 @@ def main() -> None:
     ap.add_argument("--spd_cluster_thr", type=float, default=5.0)
     ap.add_argument("--time_cluster_thr", type=float, default=0.2)
     ap.add_argument("--progress_every", type=int, default=50)
+    ap.add_argument(
+        "--include_pseudo_tracks",
+        action="store_true",
+        help="Include full pseudo_tracks in output episodes for debugging",
+    )
     args = ap.parse_args()
 
-    raw_dir = Path(args.raw_dir)
+    if bool(args.raw_dir) == bool(args.run_dir):
+        raise ValueError("Provide exactly one of --raw_dir or --run_dir")
+
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    run_dirs = sorted(d for d in raw_dir.iterdir() if d.is_dir() and d.name.startswith("VeReMi_"))
-    if not run_dirs:
-        print(f"No VeReMi_* directories in {raw_dir}")
-        return
+    if args.run_dir is not None:
+        run_dir = Path(args.run_dir)
+        if not run_dir.is_dir():
+            raise ValueError(f"run_dir does not exist or is not a directory: {run_dir}")
+        if not run_dir.name.startswith("VeReMi_"):
+            raise ValueError("run_dir must point to a VeReMi_* directory")
+        run_dirs = [run_dir]
+        attack_type = run_dir.parent.name
+    else:
+        raw_dir = Path(args.raw_dir)
+        if not raw_dir.is_dir():
+            raise ValueError(f"raw_dir does not exist or is not a directory: {raw_dir}")
+        run_dirs = sorted(d for d in raw_dir.iterdir() if d.is_dir() and d.name.startswith("VeReMi_"))
+        if not run_dirs:
+            print(f"No VeReMi_* directories in {raw_dir}")
+            return
+        attack_type = raw_dir.name
 
-    attack_type = raw_dir.name
     traffic_regime = _traffic_regime_from_attack_type(attack_type)
     print(
         f"Attack type: {attack_type} | regime: {traffic_regime} | runs: {len(run_dirs)}",
@@ -691,6 +724,7 @@ def main() -> None:
             spd_cluster_thr=args.spd_cluster_thr,
             time_cluster_thr=args.time_cluster_thr,
             progress_every=args.progress_every,
+            include_pseudo_tracks=args.include_pseudo_tracks,
         )
         grand_receivers += stats["receivers_processed"]
         grand_episodes += stats["episodes_written"]
