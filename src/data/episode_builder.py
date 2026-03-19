@@ -180,6 +180,22 @@ def parse_trace_filename(name: str) -> Dict[str, Any]:
     }
 
 
+def build_vehicle_attack_map(trace_paths: List[Path]) -> Dict[int, int]:
+    """Map each vehicle ID to its file-name attack flag within one run."""
+    vehicle_attack_map: Dict[int, int] = {}
+    for trace_path in trace_paths:
+        meta = parse_trace_filename(trace_path.name)
+        vehicle_id = meta["vehicle_id"]
+        attack_flag = meta["attack_flag"]
+        prior = vehicle_attack_map.get(vehicle_id)
+        if prior is not None and prior != attack_flag:
+            raise ValueError(
+                f"Conflicting attack flags for vehicle {vehicle_id}: {prior} vs {attack_flag}"
+            )
+        vehicle_attack_map[vehicle_id] = attack_flag
+    return vehicle_attack_map
+
+
 # ── receiver log I/O ────────────────────────────────────────────────
 
 def load_receiver_log(path: Path) -> List[Dict]:
@@ -234,6 +250,8 @@ def _pseudo_track(msgs: List[Dict], window_dur: float) -> Dict:
         _mean([p[0] for p in poses]),
         _mean([p[1] for p in poses]),
     ]
+    start_pos = poses[0][:2]
+    end_pos = poses[-1][:2]
 
     return {
         "num_msgs": len(msgs),
@@ -243,6 +261,9 @@ def _pseudo_track(msgs: List[Dict], window_dur: float) -> Dict:
         "msg_rate": msg_rate,
         "iat_mean": _mean(iat),
         "iat_std": _std(iat),
+        "start_pos": start_pos,
+        "end_pos": end_pos,
+        "displacement": _distance2d(start_pos, end_pos),
         "avg_pos": avg_pos,
         "pos_spread": _bbox_spread([p[:2] for p in poses]),
         "avg_speed": _mean(spds),
@@ -362,6 +383,7 @@ def build_episode(
     attack_flag: int,
     attack_type: str,
     traffic_regime: str,
+    vehicle_attack_map: Dict[int, int],
     window_start: float,
     window_end: float,
     gt_info: Optional[Dict] = None,
@@ -393,15 +415,23 @@ def build_episode(
 
     all_spds = [_speed_scalar(m["spd"]) for m in bsms]
     unique_pseudos = set(by_pseudo.keys())
+    unique_senders = sorted({int(m["sender"]) for m in bsms})
     single_message_pseudos = [t for t in pseudo_tracks.values() if t["num_msgs"] == 1]
     short_lived_pseudos = [
         t for t in pseudo_tracks.values()
         if t["lifetime_fraction"] < SHORT_LIVED_FRACTION_THR
     ]
+    pseudo_local_map = {
+        pseudo_id: f"p{idx}" for idx, pseudo_id in enumerate(sorted(unique_pseudos), start=1)
+    }
+    sender_local_map = {
+        sender_id: f"s{idx}" for idx, sender_id in enumerate(unique_senders, start=1)
+    }
 
     region = {
         "num_bsms": len(bsms),
         "num_unique_pseudos": len(unique_pseudos),
+        "num_unique_senders": len(unique_senders),
         "avg_speed": _mean(all_spds),
         "median_speed": _median(all_spds),
         "speed_std": _std(all_spds),
@@ -456,36 +486,104 @@ def build_episode(
         ),
     }
 
-    sender_to_pseudos_local: Dict[int, set[int]] = defaultdict(set)
+    pseudo_to_senders_local: Dict[int, set[int]] = defaultdict(set)
     for msg in bsms:
-        sender_to_pseudos_local[msg["sender"]].add(msg["senderPseudo"])
-    local_sybil_senders = {s for s, pseudos in sender_to_pseudos_local.items() if len(pseudos) > 1}
-    local_sybil_pseudos: set[int] = set()
-    for sender_id in local_sybil_senders:
-        local_sybil_pseudos |= sender_to_pseudos_local[sender_id]
+        sender_id = int(msg["sender"])
+        pseudo_id = int(msg["senderPseudo"])
+        pseudo_to_senders_local[pseudo_id].add(sender_id)
 
-    attacker_vehicle_ids: List[int] = sorted(local_sybil_senders)
-    sybil_pseudos: set[int] = set(local_sybil_pseudos)
-    if gt_info is not None:
-        p2s = gt_info["pseudo_to_sender"]
-        sybil_gt = gt_info["sybil_senders"]
-        for pseudo in unique_pseudos:
-            phys = p2s.get(pseudo)
-            if phys is not None and phys in sybil_gt:
-                attacker_vehicle_ids.append(phys)
-                sybil_pseudos.add(pseudo)
+    attacker_messages = [
+        msg for msg in bsms if vehicle_attack_map.get(int(msg["sender"]), 0) != 0
+    ]
+    attacker_sender_ids = sorted(
+        sender_id for sender_id in unique_senders if vehicle_attack_map.get(sender_id, 0) != 0
+    )
+    attacker_pseudo_ids = sorted(
+        pseudo_id
+        for pseudo_id in sorted(unique_pseudos)
+        if any(
+            vehicle_attack_map.get(sender_id, 0) != 0
+            for sender_id in pseudo_to_senders_local[pseudo_id]
+        )
+    )
+    benign_sender_ids = [sender_id for sender_id in unique_senders if sender_id not in attacker_sender_ids]
+    benign_pseudo_ids = [
+        pseudo_id for pseudo_id in sorted(unique_pseudos) if pseudo_id not in attacker_pseudo_ids
+    ]
+    attacker_sender_id_set = set(attacker_sender_ids)
+    attacker_pseudo_id_set = set(attacker_pseudo_ids)
 
-    attacker_vehicle_ids = sorted(set(attacker_vehicle_ids))
-    # `attacker_vehicle_ids` is retained for analysis / evaluation only and
-    # should not be surfaced to the model when prompts are built later.
-    label = {
-        "contains_sybil_attacker": len(attacker_vehicle_ids) > 0,
-        "num_attacker_vehicles": len(attacker_vehicle_ids),
-        "attacker_vehicle_ids": attacker_vehicle_ids,
-        "num_sybil_pseudos": len(sybil_pseudos),
-        "sybil_pseudo_fraction": (
-            len(sybil_pseudos) / len(unique_pseudos) if unique_pseudos else 0.0
+    pseudo_to_group_id: Dict[int, str] = {}
+    pseudo_group_labels: List[Dict[str, Any]] = []
+    for group in pseudo_groups:
+        raw_pseudos = [int(pid) for pid in group["pseudos"]]
+        group_id = group["group_id"]
+        group_sender_ids = sorted(
+            {sender_id for pseudo_id in raw_pseudos for sender_id in pseudo_to_senders_local[pseudo_id]}
+        )
+        group_attacker_pseudo_ids = sorted(
+            pseudo_id for pseudo_id in raw_pseudos if pseudo_id in attacker_pseudo_id_set
+        )
+        group_attacker_sender_ids = sorted(
+            sender_id for sender_id in group_sender_ids if sender_id in attacker_sender_id_set
+        )
+        for pseudo_id in raw_pseudos:
+            pseudo_to_group_id[pseudo_id] = group_id
+        pseudo_group_labels.append({
+            "group_id": group_id,
+            "pseudo_local_ids": [pseudo_local_map[pseudo_id] for pseudo_id in raw_pseudos],
+            "contains_attacker_pseudo": len(group_attacker_pseudo_ids) > 0,
+            "contains_attacker_sender": len(group_attacker_sender_ids) > 0,
+            "num_attacker_pseudos": len(group_attacker_pseudo_ids),
+            "num_attacker_senders": len(group_attacker_sender_ids),
+            "attacker_pseudo_fraction": (
+                len(group_attacker_pseudo_ids) / len(raw_pseudos) if raw_pseudos else 0.0
+            ),
+            "attacker_sender_fraction": (
+                len(group_attacker_sender_ids) / len(group_sender_ids) if group_sender_ids else 0.0
+            ),
+        })
+        group["pseudos"] = [pseudo_local_map[pseudo_id] for pseudo_id in raw_pseudos]
+
+    pseudo_entities: List[Dict[str, Any]] = []
+    for pseudo_id in sorted(unique_pseudos):
+        entity = dict(pseudo_tracks[pseudo_id])
+        entity["pseudo_local_id"] = pseudo_local_map[pseudo_id]
+        entity["group_id"] = pseudo_to_group_id.get(pseudo_id)
+        entity["distance_to_ego"] = _distance2d(entity["avg_pos"], ego_pos)
+        pseudo_entities.append(entity)
+
+    identity_label = {
+        "contains_attacker_message": len(attacker_messages) > 0,
+        "num_attacker_senders": len(attacker_sender_ids),
+        "num_attacker_pseudos": len(attacker_pseudo_ids),
+        "attacker_message_fraction": (
+            len(attacker_messages) / len(bsms) if bsms else 0.0
         ),
+        "attacker_sender_fraction": (
+            len(attacker_sender_ids) / len(unique_senders) if unique_senders else 0.0
+        ),
+        "attacker_pseudo_fraction": (
+            len(attacker_pseudo_ids) / len(unique_pseudos) if unique_pseudos else 0.0
+        ),
+        "attacker_sender_local_ids": [
+            sender_local_map[sender_id] for sender_id in attacker_sender_ids
+        ],
+        "attacker_sender_vehicle_ids": attacker_sender_ids,
+        "benign_sender_local_ids": [
+            sender_local_map[sender_id] for sender_id in benign_sender_ids
+        ],
+        "attacker_pseudo_local_ids": [
+            pseudo_local_map[pseudo_id] for pseudo_id in attacker_pseudo_ids
+        ],
+        "attacker_pseudo_ids": attacker_pseudo_ids,
+        "benign_pseudo_local_ids": [
+            pseudo_local_map[pseudo_id] for pseudo_id in benign_pseudo_ids
+        ],
+        "identity_source": "filename_attack_flag",
+    }
+    label = {
+        "identity": identity_label,
     }
 
     episode: Dict[str, Any] = {
@@ -504,7 +602,9 @@ def build_episode(
         },
         "ego": ego,
         "region": region,
+        "pseudo_entities": pseudo_entities,
         "pseudo_groups": pseudo_groups,
+        "pseudo_group_labels": pseudo_group_labels,
         "group_summary": group_summary,
         "label": label,
     }
@@ -520,6 +620,7 @@ def episodes_from_receiver(
     run_id: str,
     attack_type: str,
     traffic_regime: str,
+    vehicle_attack_map: Dict[int, int],
     gt_info: Optional[Dict] = None,
     window_sec: float = 10.0,
     step_sec: float = 5.0,
@@ -549,6 +650,7 @@ def episodes_from_receiver(
             attack_flag=meta["attack_flag"],
             attack_type=attack_type,
             traffic_regime=traffic_regime,
+            vehicle_attack_map=vehicle_attack_map,
             window_start=ws,
             window_end=we,
             gt_info=gt_info,
@@ -590,9 +692,29 @@ def process_run(
         gt_info = load_ground_truth(gt_files[0])
         n_pseudo = len(gt_info["pseudo_to_sender"])
         n_sybil = len(gt_info["sybil_senders"])
-        print(f"  GT ready: {n_pseudo} pseudo->sender, {n_sybil} Sybil senders", flush=True)
+        print(
+            f"  GT loaded: {n_pseudo} pseudo->sender, {n_sybil} GT multi-pseudo senders",
+            flush=True,
+        )
 
     traces = sorted(run_dir.glob("traceJSON-*.json"))
+    vehicle_attack_map = build_vehicle_attack_map(traces)
+    num_vehicles = len(vehicle_attack_map)
+    num_attackers = sum(1 for flag in vehicle_attack_map.values() if flag != 0)
+    num_benign = num_vehicles - num_attackers
+    attack_flag_hist: Dict[int, int] = defaultdict(int)
+    for flag in vehicle_attack_map.values():
+        attack_flag_hist[flag] += 1
+    print(
+        f"  File-name attack map ready: {num_vehicles} vehicles | "
+        f"attackers={num_attackers} | benign={num_benign}",
+        flush=True,
+    )
+    print(
+        "  File-name attack flags: "
+        + ", ".join(f"A{flag}={count}" for flag, count in sorted(attack_flag_hist.items())),
+        flush=True,
+    )
     if max_receivers is not None:
         traces = traces[:max_receivers]
 
@@ -612,6 +734,7 @@ def process_run(
                 run_id,
                 attack_type=attack_type,
                 traffic_regime=traffic_regime,
+                vehicle_attack_map=vehicle_attack_map,
                 gt_info=gt_info,
                 window_sec=window_sec,
                 step_sec=step_sec,
@@ -626,7 +749,9 @@ def process_run(
             stats["receivers_processed"] += 1
             stats["episodes_written"] += len(episodes)
             stats["positive_episodes"] += sum(
-                1 for ep in episodes if ep["label"]["contains_sybil_attacker"]
+                1
+                for ep in episodes
+                if ep["label"]["identity"]["contains_attacker_message"]
             )
 
             if i % progress_every == 0 or i == len(traces):
