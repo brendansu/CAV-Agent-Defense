@@ -7,8 +7,13 @@ This script:
 
 Typical usage (from repo root):
 
-    python src/training/train_lora_qwen_gridsybil_pseudo_ident.py ^
+    python -m src.training.train_lora_qwen_gridsybil_pseudo_ident ^
         --config configs/qwen2.5_1.5b_gridsybil_pseudo_ident.yaml
+
+Single-node multi-GPU (DDP; one 4-bit replica per GPU):
+
+    torchrun --standalone --nproc_per_node=4 -m src.training.train_lora_qwen_gridsybil_pseudo_ident ^
+        --config configs/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc.yaml
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -61,6 +67,15 @@ def load_config(path: str) -> Dict[str, Any]:
     return cfg
 
 
+def _distributed_world_size() -> int:
+    return int(os.environ.get("WORLD_SIZE", "1"))
+
+
+def _local_rank() -> int:
+    # torchrun / torch.distributed.launch set LOCAL_RANK per process
+    return int(os.environ.get("LOCAL_RANK", "0"))
+
+
 def setup_tokenizer_and_model(
     model_name: str,
     lora_r: int,
@@ -80,10 +95,26 @@ def setup_tokenizer_and_model(
         bnb_4bit_quant_type="nf4",
     )
 
+    local_rank = _local_rank()
+    world_size = _distributed_world_size()
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        # One full model per DDP process; avoid device_map="auto" spanning all GPUs.
+        device_map: dict[str, int] | str = {"": local_rank}
+    else:
+        device_map = "cpu"
+
+    if local_rank == 0:
+        print(
+            f"QLoRA load: device_map={device_map!r} LOCAL_RANK={local_rank} "
+            f"WORLD_SIZE={world_size}",
+            flush=True,
+        )
+
     base_model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map=device_map,
     )
 
     lora_config = LoraConfig(
@@ -102,11 +133,12 @@ def setup_tokenizer_and_model(
         total += numel
         if p.requires_grad:
             trainable += numel
-    print(
-        f"Trainable params: {trainable} / {total} "
-        f"({100 * trainable / max(1, total):.2f}%)",
-        flush=True,
-    )
+    if _local_rank() == 0:
+        print(
+            f"Trainable params: {trainable} / {total} "
+            f"({100 * trainable / max(1, total):.2f}%)",
+            flush=True,
+        )
     return tokenizer, model
 
 
@@ -124,27 +156,34 @@ def build_training_arguments(
     num_train_epochs = float(config.get("num_train_epochs", 1.0))
     warmup_ratio = float(config.get("warmup_ratio", 0.03))
     max_steps = int(config.get("max_steps", -1))
-
-    steps_per_epoch = math.ceil(
-        train_dataset_size / (per_device_train_batch_size * gradient_accumulation_steps)
+    world_size = _distributed_world_size()
+    denom = (
+        per_device_train_batch_size
+        * gradient_accumulation_steps
+        * max(1, world_size)
     )
+    steps_per_epoch = math.ceil(train_dataset_size / denom)
+
     if max_steps > 0:
         total_training_steps = max_steps
         warmup_steps = int(total_training_steps * warmup_ratio)
-        print(
-            f"Using max_steps={max_steps} (overrides num_train_epochs). "
-            f"steps_per_epoch={steps_per_epoch}, warmup_steps={warmup_steps}",
-            flush=True,
-        )
+        if _local_rank() == 0:
+            print(
+                f"Using max_steps={max_steps} (overrides num_train_epochs). "
+                f"steps_per_epoch≈{steps_per_epoch} (WORLD_SIZE={world_size}), "
+                f"warmup_steps={warmup_steps}",
+                flush=True,
+            )
     else:
         total_training_steps = int(steps_per_epoch * num_train_epochs)
         warmup_steps = int(total_training_steps * warmup_ratio)
-        print(
-            f"Estimated steps_per_epoch={steps_per_epoch}, "
-            f"total_training_steps={total_training_steps}, "
-            f"warmup_steps={warmup_steps}",
-            flush=True,
-        )
+        if _local_rank() == 0:
+            print(
+                f"Estimated steps_per_epoch≈{steps_per_epoch} (WORLD_SIZE={world_size}), "
+                f"total_training_steps={total_training_steps}, "
+                f"warmup_steps={warmup_steps}",
+                flush=True,
+            )
 
     eval_strategy = config.get("eval_strategy", "steps")
     eval_steps = int(config.get("eval_steps", 500))
@@ -233,8 +272,9 @@ def main() -> None:
         ["q_proj", "k_proj", "v_proj", "o_proj"],
     )
 
-    print("Loaded config:", flush=True)
-    print(json.dumps(config, indent=2), flush=True)
+    if _local_rank() == 0:
+        print("Loaded config:", flush=True)
+        print(json.dumps(config, indent=2), flush=True)
 
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -257,23 +297,26 @@ def main() -> None:
         add_eos_token=add_eos_token,
     )
 
-    print(f"Train dataset size: {len(train_ds)}", flush=True)
-    print(f"Val dataset size:   {len(val_ds)}", flush=True)
-    print(f"Test dataset size:  {len(test_ds)}", flush=True)
-    summarize_dataset(train_ds, "train")
-    summarize_dataset(val_ds, "val")
-    summarize_dataset(test_ds, "test")
+    if _local_rank() == 0:
+        print(f"Train dataset size: {len(train_ds)}", flush=True)
+        print(f"Val dataset size:   {len(val_ds)}", flush=True)
+        print(f"Test dataset size:  {len(test_ds)}", flush=True)
+        summarize_dataset(train_ds, "train")
+        summarize_dataset(val_ds, "val")
+        summarize_dataset(test_ds, "test")
 
     max_eval_samples = int(config.get("max_eval_samples", 0))
     if max_eval_samples > 0 and len(val_ds) > max_eval_samples:
         eval_ds = val_ds.select(range(max_eval_samples))
-        print(
-            f"Eval subset size:   {len(eval_ds)} (max_eval_samples={max_eval_samples})",
-            flush=True,
-        )
+        if _local_rank() == 0:
+            print(
+                f"Eval subset size:   {len(eval_ds)} (max_eval_samples={max_eval_samples})",
+                flush=True,
+            )
     else:
         eval_ds = val_ds
-        print("Eval subset size:   full validation set", flush=True)
+        if _local_rank() == 0:
+            print("Eval subset size:   full validation set", flush=True)
 
     training_args = build_training_arguments(config, train_dataset_size=len(train_ds))
     trainer = Trainer(
@@ -281,13 +324,16 @@ def main() -> None:
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        tokenizer=tokenizer,
     )
 
     trainer.train()
-    trainer.save_model(training_args.output_dir)
-    tokenizer.save_pretrained(training_args.output_dir)
-    print(f"Training complete. Model saved to {training_args.output_dir}", flush=True)
+    if _local_rank() == 0:
+        trainer.save_model(training_args.output_dir)
+        tokenizer.save_pretrained(training_args.output_dir)
+        print(
+            f"Training complete. Model saved to {training_args.output_dir}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

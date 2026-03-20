@@ -82,6 +82,15 @@ def parse_args() -> argparse.Namespace:
         help="Print prompt tails for decode-verified samples (for manual inspection).",
     )
     ap.add_argument(
+        "--print_full_prompts_n",
+        type=int,
+        default=0,
+        help=(
+            "Print full prompt text for at most N decode-verified samples "
+            "(only prints for DECODE OK). Set 0 to disable."
+        ),
+    )
+    ap.add_argument(
         "--max_hidden_attacker_ratio",
         type=float,
         default=None,
@@ -144,6 +153,8 @@ def main() -> None:
     rng = random.Random(args.seed)
 
     all_metrics: Dict[str, Dict[str, float]] = {}
+    full_prompt_printed = 0
+    full_prompt_print_limit = int(args.print_full_prompts_n)
 
     print("Sanity config:", flush=True)
     dcfg = asdict(dataset_cfg)
@@ -246,6 +257,16 @@ def main() -> None:
                 print("label_text=", decoded_label_text)
                 print("[PROMPT TAIL]")
                 print("\n".join(prompt_build.prompt_text.splitlines()[-25:]))
+
+            # Print full prompts for a few decode-verified samples.
+            # This is intentionally capped to avoid huge logs.
+            if full_prompt_printed < full_prompt_print_limit:
+                full_prompt_printed += 1
+                print("\n[FULL PROMPT]")
+                print("id=", ex.get("id"))
+                print("visible_output_ids=", visible_output_ids)
+                print("label_text=", decoded_label_text)
+                print(prompt_build.prompt_text)
 
     print("\nAll sanity checks passed.", flush=True)
     print("Summary:", flush=True)

@@ -129,7 +129,7 @@ def build_pseudo_ident_prompt(
         "",
         "Output rules:",
         "- Return ONLY one JSON array of pseudo local IDs.",
-        "- Predict only from the listed candidate pseudo entities.",
+        "- Predict only from the pseudo IDs shown in the entity lines below.",
         '- Use ascending order, for example ["p1","p4"].',
         "- Do not repeat IDs.",
         "- If none are attacker-controlled, return [].",
@@ -149,7 +149,6 @@ def build_pseudo_ident_prompt(
     summary_lines.append(
         f"- region: bsms={region.get('num_bsms', '-')}, "
         f"pseudos={region.get('num_unique_pseudos', '-')}, "
-        f"senders={region.get('num_unique_senders', '-')}, "
         f"slow_frac={fmt_scalar(region.get('slow_msg_fraction'))}"
     )
     summary_lines.append(f"- candidate_count: {len(candidates)}")
@@ -165,7 +164,7 @@ def build_pseudo_ident_prompt(
         )
         return "\n".join(role_lines + dynamic_summary)
 
-    footer_lines: List[str] = ["", "Candidate pseudo entities:", "", "Answer:"]
+    footer_lines: List[str] = ["", "Answer:"]
     fixed_text_no_entities = "\n".join(
         role_lines + summary_lines + [f"- pseudo_entities_shown: 0/{total_entities}"]
     )
