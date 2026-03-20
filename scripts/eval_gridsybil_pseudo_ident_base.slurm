@@ -1,21 +1,21 @@
 #!/bin/bash
-#SBATCH --job-name=veremi-eval-gridsybil-lora
+#SBATCH --job-name=veremi-eval-gridsybil-base
 #SBATCH --partition=work1
 #SBATCH --time=08:00:00
 #SBATCH --mem=32gb
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --array=0-7
-#SBATCH --output=/scratch/%u/veremi_agent/slurm/eval_gridsybil_%A_%a.out
-#SBATCH --error=/scratch/%u/veremi_agent/slurm/eval_gridsybil_%A_%a.err
+#SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_gridsybil_base_%A_%a.out
+#SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_gridsybil_base_%A_%a.err
 
 # Evaluate GridSybil pseudo-entity identification on a split,
 # sharded across array tasks. Metrics only (no per-sample prints).
 
-CONFIG="${CONFIG:-$HOME/veremi_agent_local/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc.yaml}"
-SPLIT="${SPLIT:-val}"                 # or test
-MODE="${MODE:-lora}"                 # base / lora / both
-LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_agent/outputs/qwen2.5-1.5b-gridsybil-pseudo-ident-hpc}"
+CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc.yaml}"
+SPLIT="${SPLIT:-test}"                 # or test
+MODE="${MODE:-base}"                 # base / lora / both
+LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a}"
 
 NUM_SHARDS=8
 SHARD_INDEX=${SLURM_ARRAY_TASK_ID}
@@ -32,7 +32,7 @@ module load anaconda3/2023.09-0
 source "$(conda info --base)/etc/profile.d/conda.sh"
 source activate veremi
 
-cd "$HOME/veremi_agent"
+cd "$HOME/veremi_collusion"
 
 echo "CONFIG=$CONFIG"
 echo "SPLIT=$SPLIT"
