@@ -3,8 +3,8 @@
 # Example: batch=8, 4 GPUs, accum=2 → 64 samples/step (vs local 1×8=8 on one GPU).
 # If loss spikes, try a lower learning_rate or reduce batch before accum.
 model_name: Qwen/Qwen2.5-1.5B-Instruct
-jsonl_dir: data/processed/jsonl/gridsybil_pseudo_ident_balanced_a
-output_dir: outputs/qwen2.5-1.5b-gridsybil-pseudo-ident-hpc
+jsonl_dir: /scratch/YOUR_USERNAME/veremi_collusion/data/gridsybil_pseudo_ident_balanced_a
+output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a
 
 max_seq_len: 4160
 reserve_answer_tokens: 320
@@ -32,9 +32,9 @@ warmup_ratio: 0.03
 
 logging_steps: 50
 eval_strategy: steps
-eval_steps: 500
+eval_steps: 200
 save_strategy: steps
-save_steps: 500
+save_steps: 200
 save_total_limit: 3
 max_eval_samples: 2048
 report_to: []
