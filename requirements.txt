@@ -8,6 +8,7 @@ jupyter
 # Machine Learning / LLM
 scikit-learn
 transformers
+datasets
 peft
 bitsandbytes
 

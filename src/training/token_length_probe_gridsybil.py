@@ -9,6 +9,13 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from transformers import AutoTokenizer
 
+from .gridsybil_pseudo_ident_utils import (
+    GridSybilPseudoIdentPrompt,
+    answer_suffix_text_from_ids,
+    build_pseudo_ident_prompt,
+    count_answer_footer_tokens_from_ids,
+)
+
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
@@ -80,7 +87,10 @@ def parse_args() -> argparse.Namespace:
         "--reserve_answer_tokens",
         type=int,
         default=96,
-        help="Budget reserved for answer tokens when --simulate_budget_cutoff is enabled.",
+        help=(
+            "Budget reserved for answer tokens when --simulate_budget_cutoff is enabled. "
+            "Compare with printed [answer footer tokens] max/mean vs ground-truth output."
+        ),
     )
     ap.add_argument(
         "--entity_sort_policy",
@@ -119,75 +129,6 @@ def maybe_sample_records(
     return [records[i] for i in chosen]
 
 
-def _fmt(x: Any, d: int = 2) -> str:
-    try:
-        if x is None:
-            return "-"
-        return f"{float(x):.{d}f}"
-    except Exception:
-        return str(x)
-
-
-def build_entity_line(ent: Dict[str, Any]) -> str:
-    pid = ent.get("pseudo_local_id", "?")
-    gid = ent.get("group_id", "?")
-    num_msgs = ent.get("num_msgs", "-")
-    avg_speed = _fmt(ent.get("avg_speed"))
-    speed_std = _fmt(ent.get("speed_std"))
-    dist_ego = _fmt(ent.get("distance_to_ego"))
-    lifetime = _fmt(ent.get("lifetime_fraction"))
-    msg_rate = _fmt(ent.get("msg_rate"))
-    ap = ent.get("avg_pos")
-    if isinstance(ap, (list, tuple)) and len(ap) >= 2:
-        px = _fmt(ap[0])
-        py = _fmt(ap[1])
-    elif isinstance(ap, (list, tuple)) and len(ap) == 1:
-        px = _fmt(ap[0])
-        py = "-"
-    else:
-        px = py = "-"
-    hd = _fmt(ent.get("avg_heading"))
-    hd_std = _fmt(ent.get("heading_std"))
-    return (
-        f"- {pid}: g={gid} msgs={num_msgs} life={lifetime} rate={msg_rate} "
-        f"spd={avg_speed} spd_std={speed_std} dist={dist_ego} "
-        f"px={px} py={py} hd={hd} hd_std={hd_std}"
-    )
-
-
-def sort_entities(entities: List[Dict[str, Any]], policy: str) -> List[Dict[str, Any]]:
-    if policy == "none":
-        return list(entities)
-
-    def _safe_float(v: Any, fallback: float) -> float:
-        try:
-            if v is None:
-                return fallback
-            return float(v)
-        except Exception:
-            return fallback
-
-    if policy == "msgs_lifetime_distance":
-        return sorted(
-            entities,
-            key=lambda e: (
-                -_safe_float(e.get("num_msgs"), 0.0),
-                -_safe_float(e.get("lifetime_fraction"), 0.0),
-                _safe_float(e.get("distance_to_ego"), 1e9),
-            ),
-        )
-
-    # distance_msgs_lifetime
-    return sorted(
-        entities,
-        key=lambda e: (
-            _safe_float(e.get("distance_to_ego"), 1e9),
-            -_safe_float(e.get("num_msgs"), 0.0),
-            -_safe_float(e.get("lifetime_fraction"), 0.0),
-        ),
-    )
-
-
 def build_probe_prompt(
     sample: Dict[str, Any],
     include_output: bool,
@@ -197,138 +138,30 @@ def build_probe_prompt(
     reserve_answer_tokens: int,
     entity_sort_policy: str,
 ) -> Tuple[str, Dict[str, Any]]:
-    instruction = sample.get("instruction", "Identify attacker pseudo local IDs.")
-    inp = sample.get("input", {})
-    meta = inp.get("meta", {})
-    ego = inp.get("ego", {})
-    region = inp.get("region", {})
-    entities = inp.get("pseudo_entities", [])
-    entities = entities if isinstance(entities, list) else []
-    candidates = inp.get("candidate_pseudo_local_ids", [])
-
-    role_lines: List[str] = [
-        "You are an onboard CAV intrusion-detection model.",
-        "",
-        "Task:",
-        "Identify which pseudo local IDs are attacker-controlled in this episode.",
-        "",
-        "Output rules:",
-        "- Return ONLY one JSON array of pseudo local IDs.",
-        "- Predict only from the listed candidate pseudo entities.",
-        '- Use ascending order, for example ["p1","p4"].',
-        "- Do not repeat IDs.",
-        "- If none are attacker-controlled, return [].",
-        "- Do not output explanations or extra text.",
-        "",
-        "Episode summary:",
-    ]
-    summary_lines: List[str] = []
-    summary_lines.append(f"- traffic_regime: {meta.get('traffic_regime', 'unknown')}")
-    win = meta.get("window", {})
-    summary_lines.append(
-        f"- window_sec: {_fmt(win.get('duration'))}"
+    prompt_build: GridSybilPseudoIdentPrompt = build_pseudo_ident_prompt(
+        sample=sample,
+        tokenizer=tokenizer,
+        simulate_budget_cutoff=simulate_budget_cutoff,
+        total_budget=total_budget,
+        reserve_answer_tokens=reserve_answer_tokens,
+        entity_sort_policy=entity_sort_policy,
     )
-    summary_lines.append(
-        f"- ego: disp={_fmt(ego.get('displacement'))}, avg_spd={_fmt(ego.get('avg_speed'))}, spd_std={_fmt(ego.get('speed_std'))}"
-    )
-    summary_lines.append(
-        f"- region: bsms={region.get('num_bsms', '-')}, pseudos={region.get('num_unique_pseudos', '-')}, "
-        f"senders={region.get('num_unique_senders', '-')}, slow_frac={_fmt(region.get('slow_msg_fraction'))}"
-    )
-    summary_lines.append(f"- candidate_count: {len(candidates)}")
-
-    footer_lines: List[str] = []
-    footer_lines.append("")
-    footer_lines.append("Candidate pseudo entities:")
-    footer_lines.append("")
+    prompt = prompt_build.prompt_text
     if include_output:
-        footer_lines.append(f"Answer: {sample.get('output', '[]')}")
-    else:
-        footer_lines.append("Answer:")
+        prompt = prompt + answer_suffix_text_from_ids(prompt_build.visible_output_ids)
 
-    sorted_entities = sort_entities(entities, entity_sort_policy)
-    total_entities = len(sorted_entities)
-    kept_entities = 0
-    truncated = False
-
-    def build_fixed_text(shown_count: int, is_truncated: bool) -> str:
-        truncation_suffix = " (truncated)" if is_truncated else ""
-        dynamic_summary = list(summary_lines)
-        dynamic_summary.append(
-            f"- pseudo_entities_shown: {shown_count}/{total_entities}{truncation_suffix}"
-        )
-        return "\n".join(role_lines + dynamic_summary)
-
-    fixed_text_no_entities = "\n".join(role_lines + summary_lines + [f"- pseudo_entities_shown: 0/{total_entities}"])
-    fixed_with_footer_text = "\n".join([fixed_text_no_entities, *footer_lines])
-    fixed_tokens = len(tokenizer(fixed_with_footer_text, truncation=False)["input_ids"])
-    entity_lines = [build_entity_line(ent) for ent in sorted_entities]
-    entity_line_tokens = [
-        len(tokenizer(line, truncation=False)["input_ids"]) for line in entity_lines
-    ]
-
-    if not simulate_budget_cutoff:
-        body_lines = list(entity_lines)
-        kept_entities = total_entities
-        fixed_text = build_fixed_text(shown_count=kept_entities, is_truncated=False)
-        prompt = "\n".join([fixed_text] + body_lines + [*footer_lines])
-        attacker_full_ids = sample.get("output_ids", [])
-        visible_candidates = {ent.get("pseudo_local_id") for ent in sorted_entities}
-        visible_attackers = [pid for pid in attacker_full_ids if pid in visible_candidates]
-        return prompt, {
-            "fixed_tokens": fixed_tokens,
-            "entity_line_tokens": entity_line_tokens,
-            "entities_total": total_entities,
-            "entities_kept": total_entities,
-            "is_truncated_entities": False,
-            "entity_budget": None,
-            "true_attackers_full": len(attacker_full_ids),
-            "true_attackers_visible": len(visible_attackers),
-            "hidden_attacker": False,
-        }
-
-    entity_budget = max(0, total_budget - fixed_tokens - reserve_answer_tokens)
-
-    body_lines: List[str] = []
-    kept_entity_token_sum = 0
-
-    for line, line_tokens in zip(entity_lines, entity_line_tokens):
-        if kept_entity_token_sum + line_tokens <= entity_budget:
-            body_lines.append(line)
-            kept_entity_token_sum += line_tokens
-            kept_entities += 1
-        else:
-            truncated = True
-            break
-
-    if kept_entities == 0 and total_entities > 0:
-        body_lines = [entity_lines[0]]
-        kept_entity_token_sum = entity_line_tokens[0]
-        kept_entities = 1
-        truncated = total_entities > 1
-
-    fixed_text = build_fixed_text(shown_count=kept_entities, is_truncated=truncated)
-    current_text = "\n".join([fixed_text] + body_lines + [*footer_lines])
-    current_tokens = len(tokenizer(current_text, truncation=False)["input_ids"])
-    attacker_full_ids = sample.get("output_ids", [])
-    visible_candidates = set()
-    for ent in sorted_entities[:kept_entities]:
-        pid = ent.get("pseudo_local_id")
-        if pid is not None:
-            visible_candidates.add(pid)
-    visible_attackers = [pid for pid in attacker_full_ids if pid in visible_candidates]
-
-    return current_text, {
-        "fixed_tokens": fixed_tokens,
-        "entity_line_tokens": entity_line_tokens,
-        "entities_total": total_entities,
-        "entities_kept": kept_entities,
-        "is_truncated_entities": truncated,
-        "entity_budget": entity_budget,
-        "tokens_after_budget_build": current_tokens,
-        "true_attackers_full": len(attacker_full_ids),
-        "true_attackers_visible": len(visible_attackers),
-        "hidden_attacker": len(visible_attackers) < len(attacker_full_ids),
+    return prompt, {
+        "fixed_tokens": prompt_build.fixed_tokens,
+        "entity_line_tokens": prompt_build.entity_line_tokens,
+        "entities_total": prompt_build.entities_total,
+        "entities_kept": prompt_build.entities_kept,
+        "is_truncated_entities": prompt_build.is_truncated_entities,
+        "entity_budget": prompt_build.entity_budget,
+        "tokens_after_budget_build": len(tokenizer(prompt, truncation=False)["input_ids"]),
+        "true_attackers_full": len(sample.get("output_ids", [])),
+        "true_attackers_visible": len(prompt_build.visible_output_ids),
+        "hidden_attacker": len(prompt_build.visible_output_ids) < len(sample.get("output_ids", [])),
+        "visible_output_ids": list(prompt_build.visible_output_ids),
     }
 
 
@@ -474,6 +307,7 @@ def main() -> None:
         sum_entities_kept = 0
         fixed_tokens_all: List[float] = []
         entity_line_tokens_all: List[float] = []
+        answer_footer_tokens_all: List[float] = []
         true_attackers_full_all: List[float] = []
         true_attackers_visible_all: List[float] = []
         attacker_visibility_all: List[float] = []
@@ -509,6 +343,14 @@ def main() -> None:
             entity_line_tokens_all.extend(
                 float(x) for x in prompt_meta.get("entity_line_tokens", [])
             )
+            answer_footer_tokens_all.append(
+                float(
+                    count_answer_footer_tokens_from_ids(
+                        tokenizer,
+                        list(prompt_meta.get("visible_output_ids", [])),
+                    )
+                )
+            )
             n_true_full = float(prompt_meta.get("true_attackers_full", 0.0))
             n_true_visible = float(prompt_meta.get("true_attackers_visible", 0.0))
             true_attackers_full_all.append(n_true_full)
@@ -534,8 +376,15 @@ def main() -> None:
             )
             fixed_stats = summarize_numeric(fixed_tokens_all)
             entity_line_stats = summarize_numeric(entity_line_tokens_all)
+            answer_stats = summarize_numeric(answer_footer_tokens_all)
             fixed_tokens_mean = fixed_stats["mean"]
             entity_line_tokens_p90 = entity_line_stats["p90"]
+            answer_mean = answer_stats["mean"]
+            answer_max = answer_stats["max"]
+            answer_p90 = answer_stats["p90"]
+            answer_p95 = answer_stats["p95"]
+            n_gt_reserve = sum(1 for x in answer_footer_tokens_all if x > args.reserve_answer_tokens)
+            frac_gt_reserve = n_gt_reserve / len(answer_footer_tokens_all)
             estimated_max_entities_by_p90 = (
                 int(
                     max(
@@ -551,6 +400,14 @@ def main() -> None:
                 f"[budget estimate] fixed_tokens_mean={fixed_tokens_mean:.1f} "
                 f"entity_line_tokens_p90={entity_line_tokens_p90:.1f} "
                 f"estimated_max_entities_by_p90={estimated_max_entities_by_p90}",
+                flush=True,
+            )
+            print(
+                f"[answer footer tokens] mean={answer_mean:.1f} p50={answer_stats['p50']:.1f} "
+                f"p90={answer_p90:.1f} p95={answer_p95:.1f} max={answer_max:.0f} "
+                f"(standalone line 'Answer: '+visible attacker ids after input truncation; "
+                f"reserve_answer_tokens={args.reserve_answer_tokens} "
+                f"samples_gt_reserve={n_gt_reserve}/{len(records)}={frac_gt_reserve:.3%})",
                 flush=True,
             )
             avg_true_full = sum(true_attackers_full_all) / len(true_attackers_full_all)
