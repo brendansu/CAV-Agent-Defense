@@ -34,7 +34,7 @@ MAX_SAMPLES="${MAX_SAMPLES:-0}"
 # You can override if you want, otherwise keep as empty.
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-}"
 LOG_TIERS="${LOG_TIERS:-L0,L1}"
-LOG_PSEUDO_PATH="${LOG_PSEUDO_PATH:-/scratch/$USER/veremi_collusion/outputs/eval_logs/pseudo_fact_${RUN_ID}_${MODEL_TAG}_${SPLIT}_shard${SHARD_INDEX}.jsonl"
+LOG_PSEUDO_PATH="${LOG_PSEUDO_PATH:-/scratch/$USER/veremi_collusion/outputs/eval_logs/pseudo_fact_${RUN_ID}_${MODEL_TAG}_${SPLIT}_shard${SHARD_INDEX}.jsonl}"
 
 module load cuda/12.3.0
 module load anaconda3/2023.09-0
