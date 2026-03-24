@@ -20,6 +20,7 @@ Typical usage (repo root):
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import random
 import time
@@ -43,6 +44,48 @@ from ..training.dataset_sanity_gridsybil_pseudo_ident import extract_json_array
 from ..training.gridsybil_pseudo_ident_utils import build_pseudo_ident_prompt
 
 EvalMode = Literal["base", "lora", "both"]
+LOG_TIER_FIELDS: Dict[str, Set[str]] = {
+    "L0": {
+        "run_id",
+        "model_tag",
+        "split",
+        "episode_id",
+        "pseudo_local_id",
+        "is_gold_attacker",
+        "is_pred_attacker",
+        "tp",
+        "fp",
+        "fn",
+        "tn",
+        "parse_ok",
+        "has_oob_pred",
+        "is_exact_match",
+        "is_truncated_entities",
+        "traffic_regime",
+        "n_visible_candidates",
+        "n_visible_attackers",
+    },
+    "L1": {
+        "num_msgs",
+        "lifetime_fraction",
+        "msg_rate",
+        "distance_to_ego",
+        "avg_speed",
+        "speed_std",
+        "avg_heading",
+        "heading_std",
+        "ego_avg_speed",
+        "ego_speed_std",
+        "ego_displacement",
+        "ego_avg_heading",
+        "ego_heading_std",
+        "region_num_bsms",
+        "region_num_unique_pseudos",
+        "region_slow_msg_fraction",
+        "feature_source",
+        "feature_def_version",
+    },
+}
 
 
 @dataclass
@@ -65,6 +108,10 @@ class EvalConfig:
     num_shards: int
     shard_index: int
     seed: int
+    run_id: str
+    log_pseudo_path: str | None
+    log_tiers: Set[str]
+    log_gzip: bool
 
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:
@@ -119,6 +166,32 @@ def parse_args() -> EvalConfig:
     p.add_argument("--num_shards", type=int, default=1)
     p.add_argument("--shard_index", type=int, default=0)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--run_id",
+        type=str,
+        default=None,
+        help="Run identifier used in pseudo fact rows and log path templates.",
+    )
+    p.add_argument(
+        "--log_pseudo_path",
+        type=str,
+        default=None,
+        help=(
+            "Optional pseudo fact output path (.jsonl or .jsonl.gz). Supports "
+            "{run_id}/{model_tag}/{split}/{shard_index} placeholders."
+        ),
+    )
+    p.add_argument(
+        "--log_tiers",
+        type=str,
+        default="L0,L1",
+        help="Comma-separated pseudo-log tiers. Supported: L0,L1.",
+    )
+    p.add_argument(
+        "--no_log_gzip",
+        action="store_true",
+        help="Disable gzip wrapper when --log_pseudo_path does not end with .gz.",
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -141,6 +214,8 @@ def parse_args() -> EvalConfig:
         raise ValueError("shard_index must be in [0, num_shards).")
 
     max_samples = None if args.max_samples == 0 else args.max_samples
+    run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S")
+    log_tiers = parse_log_tiers(args.log_tiers)
 
     return EvalConfig(
         model_name=str(y.get("model_name", "Qwen/Qwen2.5-1.5B-Instruct")),
@@ -161,7 +236,24 @@ def parse_args() -> EvalConfig:
         num_shards=args.num_shards,
         shard_index=args.shard_index,
         seed=args.seed,
+        run_id=run_id,
+        log_pseudo_path=args.log_pseudo_path,
+        log_tiers=log_tiers,
+        log_gzip=not args.no_log_gzip,
     )
+
+
+def parse_log_tiers(raw: str) -> Set[str]:
+    out = {t.strip().upper() for t in raw.split(",") if t.strip()}
+    if not out:
+        raise ValueError("--log_tiers cannot be empty.")
+    unsupported = sorted(out - set(LOG_TIER_FIELDS.keys()))
+    if unsupported:
+        raise ValueError(
+            f"Unsupported log tier(s): {unsupported}. "
+            f"Supported tiers: {sorted(LOG_TIER_FIELDS.keys())}"
+        )
+    return out
 
 
 def setup_tokenizer(model_name_or_dir: str) -> PreTrainedTokenizerBase:
@@ -301,6 +393,47 @@ def aggregate_metrics(
     }
 
 
+def enabled_log_fields(log_tiers: Set[str]) -> Set[str]:
+    fields: Set[str] = set()
+    for t in log_tiers:
+        fields.update(LOG_TIER_FIELDS[t])
+    return fields
+
+
+def _open_log_file(path: Path, use_gzip: bool):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    should_gzip = path.suffix == ".gz" or use_gzip
+    if should_gzip and path.suffix != ".gz":
+        path = path.with_suffix(path.suffix + ".gz")
+    if should_gzip:
+        return path, gzip.open(path, "wt", encoding="utf-8")
+    return path, path.open("w", encoding="utf-8")
+
+
+def _safe_float(x: Any) -> float | None:
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _entity_feature_map(ex: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    inp = ex.get("input", {})
+    entities = inp.get("pseudo_entities", [])
+    if not isinstance(entities, list):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        pid = _norm_id(ent.get("pseudo_local_id"))
+        if pid and pid not in out:
+            out[pid] = ent
+    return out
+
+
 def run_eval(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -316,8 +449,28 @@ def run_eval(
     prompt_too_long = 0
     pred_oob_n = 0
     n = len(rows)
+    pseudo_rows_written = 0
 
     examples: List[Dict[str, Any]] = []
+    pseudo_log_fields = enabled_log_fields(cfg.log_tiers)
+    pseudo_log_fh = None
+    pseudo_log_real_path: Path | None = None
+
+    if cfg.log_pseudo_path:
+        rendered = cfg.log_pseudo_path.format(
+            run_id=cfg.run_id,
+            model_tag=model_tag,
+            split=cfg.split,
+            shard_index=cfg.shard_index,
+        )
+        pseudo_log_real_path, pseudo_log_fh = _open_log_file(
+            Path(rendered),
+            use_gzip=cfg.log_gzip,
+        )
+        print(
+            f"Pseudo logging enabled: path={pseudo_log_real_path} tiers={sorted(cfg.log_tiers)}",
+            flush=True,
+        )
 
     print(
         f"Evaluating {model_tag} on {n} samples (split={cfg.split})...",
@@ -391,6 +544,110 @@ def run_eval(
 
         if gold_set == pred_visible:
             exact_match += 1
+        is_exact = 1 if gold_set == pred_visible else 0
+
+        if pseudo_log_fh is not None:
+            inp = ex.get("input", {})
+            meta = inp.get("meta", {}) if isinstance(inp, dict) else {}
+            ego = inp.get("ego", {}) if isinstance(inp, dict) else {}
+            region = inp.get("region", {}) if isinstance(inp, dict) else {}
+            entities_by_pid = _entity_feature_map(ex)
+
+            vis_dedup = list(dict.fromkeys(visible_candidates))
+            n_visible_candidates = len(vis_dedup)
+            n_visible_attackers = len(gold_set)
+            has_oob_pred = 1 if oob else 0
+            parse_ok = 1 if p_ok else 0
+            is_truncated_entities = 1 if pb.is_truncated_entities else 0
+            traffic_regime = (
+                meta.get("traffic_regime")
+                if isinstance(meta, dict)
+                else None
+            )
+            for pid in vis_dedup:
+                t = 1 if pid in gold_set else 0
+                p = 1 if pid in pred_visible else 0
+                row: Dict[str, Any] = {
+                    "run_id": cfg.run_id,
+                    "model_tag": model_tag,
+                    "split": cfg.split,
+                    "episode_id": ex.get("id"),
+                    "pseudo_local_id": pid,
+                    "is_gold_attacker": t,
+                    "is_pred_attacker": p,
+                    "tp": 1 if (t == 1 and p == 1) else 0,
+                    "fp": 1 if (t == 0 and p == 1) else 0,
+                    "fn": 1 if (t == 1 and p == 0) else 0,
+                    "tn": 1 if (t == 0 and p == 0) else 0,
+                    "parse_ok": parse_ok,
+                    "has_oob_pred": has_oob_pred,
+                    "is_exact_match": is_exact,
+                    "is_truncated_entities": is_truncated_entities,
+                    "traffic_regime": traffic_regime,
+                    "n_visible_candidates": n_visible_candidates,
+                    "n_visible_attackers": n_visible_attackers,
+                }
+                ent = entities_by_pid.get(pid, {})
+                row.update(
+                    {
+                        "num_msgs": ent.get("num_msgs") if isinstance(ent, dict) else None,
+                        "lifetime_fraction": _safe_float(ent.get("lifetime_fraction"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "msg_rate": _safe_float(ent.get("msg_rate"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "distance_to_ego": _safe_float(ent.get("distance_to_ego"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "avg_speed": _safe_float(ent.get("avg_speed"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "speed_std": _safe_float(ent.get("speed_std"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "avg_heading": _safe_float(ent.get("avg_heading"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "heading_std": _safe_float(ent.get("heading_std"))
+                        if isinstance(ent, dict)
+                        else None,
+                        "ego_avg_speed": _safe_float(ego.get("avg_speed"))
+                        if isinstance(ego, dict)
+                        else None,
+                        "ego_speed_std": _safe_float(ego.get("speed_std"))
+                        if isinstance(ego, dict)
+                        else None,
+                        "ego_displacement": _safe_float(ego.get("displacement"))
+                        if isinstance(ego, dict)
+                        else None,
+                        "ego_avg_heading": _safe_float(ego.get("avg_heading"))
+                        if isinstance(ego, dict)
+                        else None,
+                        "ego_heading_std": _safe_float(ego.get("heading_std"))
+                        if isinstance(ego, dict)
+                        else None,
+                        "region_num_bsms": region.get("num_bsms")
+                        if isinstance(region, dict)
+                        else None,
+                        "region_num_unique_pseudos": region.get("num_unique_pseudos")
+                        if isinstance(region, dict)
+                        else None,
+                        "region_slow_msg_fraction": _safe_float(
+                            region.get("slow_msg_fraction")
+                        )
+                        if isinstance(region, dict)
+                        else None,
+                        "feature_source": "input.pseudo_entities",
+                        "feature_def_version": "v1",
+                    }
+                )
+                out_row = {k: row.get(k) for k in pseudo_log_fields}
+                pseudo_log_fh.write(
+                    json.dumps(out_row, ensure_ascii=False, separators=(",", ":"))
+                    + "\n"
+                )
+                pseudo_rows_written += 1
 
         if cfg.print_predictions > 0 and i < cfg.print_predictions:
             print(
@@ -453,10 +710,17 @@ def run_eval(
         f"({exact_match / max(1, n):.4f})",
         flush=True,
     )
+    if pseudo_log_fh is not None and pseudo_log_real_path is not None:
+        pseudo_log_fh.close()
+        print(
+            f"pseudo_fact_rows={pseudo_rows_written} path={pseudo_log_real_path}",
+            flush=True,
+        )
 
     summary = {
         "model_tag": model_tag,
         "split": cfg.split,
+        "run_id": cfg.run_id,
         "n": n,
         "prompt_too_long": prompt_too_long,
         "parse_ok": parse_ok_n,
@@ -470,6 +734,7 @@ def run_eval(
         "micro_recall": metrics["micro_recall"],
         "micro_f1": metrics["micro_f1"],
         "episode_exact_match": exact_match,
+        "pseudo_fact_rows": pseudo_rows_written,
     }
     print("METRICS_JSON:", json.dumps(summary, ensure_ascii=False), flush=True)
 
@@ -515,6 +780,10 @@ def main() -> None:
                 "entity_sort_policy": cfg.entity_sort_policy,
                 "simulate_budget_cutoff": cfg.simulate_budget_cutoff,
                 "seed": cfg.seed,
+                "run_id": cfg.run_id,
+                "log_pseudo_path": cfg.log_pseudo_path,
+                "log_tiers": sorted(cfg.log_tiers),
+                "log_gzip": cfg.log_gzip,
             },
             indent=2,
             ensure_ascii=False,
