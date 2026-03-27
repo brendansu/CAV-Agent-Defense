@@ -36,7 +36,12 @@ from transformers import (
     TrainingArguments,
 )
 
-from .dataset_gridsybil_pseudo_ident import load_gridsybil_pseudo_ident_datasets
+from .dataset_gridsybil_pseudo_ident import (
+    load_gridsybil_pseudo_ident_datasets,
+    maybe_resample_low_attacker_rows,
+    summarize_attacker_bucket_distribution,
+)
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -271,6 +276,29 @@ def main() -> None:
         "target_modules",
         ["q_proj", "k_proj", "v_proj", "o_proj"],
     )
+    resample_low_attacker_enabled = bool(
+        config.get("resample_low_attacker_enabled", False)
+    )
+    resample_seed = int(config.get("resample_seed", 42))
+    resample_target_size_multiplier = float(
+        config.get("resample_target_size_multiplier", 1.0)
+    )
+    default_bucket_weights = {
+        "0_to_1": 3.0,
+        "2_to_4": 2.0,
+        "5_to_8": 1.0,
+        "9_to_14": 1.0,
+        "more_than_14": 1.0,
+    }
+    resample_bucket_weights_raw = config.get(
+        "resample_bucket_weights",
+        default_bucket_weights,
+    )
+    if not isinstance(resample_bucket_weights_raw, dict):
+        raise ValueError("resample_bucket_weights must be a mapping in config.")
+    resample_bucket_weights: Dict[str, float] = {}
+    for k, v in resample_bucket_weights_raw.items():
+        resample_bucket_weights[str(k)] = float(v)
 
     if _local_rank() == 0:
         print("Loaded config:", flush=True)
@@ -296,6 +324,37 @@ def main() -> None:
         simulate_budget_cutoff=simulate_budget_cutoff,
         add_eos_token=add_eos_token,
     )
+
+    if resample_low_attacker_enabled:
+        if not hasattr(train_ds, "rows"):
+            raise TypeError(
+                "Resampling requires list-backed train dataset with .rows attribute."
+            )
+        before_counts = summarize_attacker_bucket_distribution(train_ds.rows)
+        resampled_rows = maybe_resample_low_attacker_rows(
+            train_rows=train_ds.rows,
+            enabled=True,
+            bucket_weights=resample_bucket_weights,
+            size_multiplier=resample_target_size_multiplier,
+            seed=resample_seed,
+        )
+        train_ds = train_ds.__class__(resampled_rows)
+        after_counts = summarize_attacker_bucket_distribution(train_ds.rows)
+        if _local_rank() == 0:
+            print(
+                f"[resample] enabled={resample_low_attacker_enabled} "
+                f"seed={resample_seed} "
+                f"size_multiplier={resample_target_size_multiplier}",
+                flush=True,
+            )
+            print(
+                f"[resample] bucket_weights={json.dumps(resample_bucket_weights, ensure_ascii=False)}",
+                flush=True,
+            )
+            print(f"[resample] train bucket before: {before_counts}", flush=True)
+            print(f"[resample] train bucket after : {after_counts}", flush=True)
+    elif _local_rank() == 0:
+        print("[resample] enabled=False", flush=True)
 
     if _local_rank() == 0:
         print(f"Train dataset size: {len(train_ds)}", flush=True)

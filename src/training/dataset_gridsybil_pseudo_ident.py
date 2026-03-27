@@ -13,6 +13,9 @@ from .gridsybil_pseudo_ident_utils import (
     build_pseudo_ident_prompt,
 )
 
+from typing import Dict, List
+import random
+
 
 @dataclass
 class GridSybilPseudoIdentDatasetConfig:
@@ -132,6 +135,81 @@ def tokenize_gridsybil_pseudo_ident_example(
         "is_truncated_entities": int(prompt_build.is_truncated_entities),
     }
 
+def attacker_bucket_from_count(n_visible_attackers: int) -> str:
+    """
+    Map n_visible_attackers to bucket key used by resampling weights.
+    Buckets:
+        - 0_to_1
+        - 2_to_4
+        - 5_to_8
+        - 9_to_14
+        - more_than_14
+    """
+    if n_visible_attackers <= 1: return "0_to_1"
+    elif n_visible_attackers <= 4: return "2_to_4"
+    elif n_visible_attackers <= 8: return "5_to_8"
+    elif n_visible_attackers <= 14: return "9_to_14"
+    else: return "more_than_14"
+
+def summarize_attacker_bucket_distribution(rows: List[dict]) -> Dict[str, int]:
+    """
+    Count samples per attacker bucket for logging before/after resampling.
+    """
+    counts = {bucket_key: 0 for bucket_key in ["0_to_1", "2_to_4", "5_to_8", "9_to_14", "more_than_14"]}
+    for r in rows:
+        n = int(r.get("n_visible_attackers", 0))
+        b = attacker_bucket_from_count(n)
+        counts[b] += 1
+    return counts
+
+def build_resample_weights(
+    rows: List[dict],
+    bucket_weights: Dict[str, float],
+) -> List[float]:
+    """
+    Build per-row sampling weight by attacker bucket.
+    If a bucket key is missing in bucket_weights, default to 1.0.
+    """
+    weights = []
+    for r in rows:
+        n = int(r.get("n_visible_attackers", 0))
+        b = attacker_bucket_from_count(n)
+        w = float(bucket_weights.get(b, 1.0))
+        if w <= 0: w = 1e-8
+        weights.append(w)
+    return weights
+
+def weighted_resample_rows(
+    rows: List[dict],
+    weights: List[float],
+    target_size: int,
+    seed: int,
+) -> List[dict]:
+    """
+    Weighted sampling with replacement.
+    Keep dataset size fixed by default (target_size = len(rows)).
+    """
+    assert len(rows) == len(weights)
+    rng = random.Random(seed)
+    idxs = rng.choices(range(len(rows)), weights=weights, k=target_size)
+    return [rows[i] for i in idxs]
+
+def maybe_resample_low_attacker_rows(
+    train_rows: List[dict],
+    enabled: bool,
+    bucket_weights: Dict[str, float],
+    size_multiplier: float,
+    seed: int,
+) -> List[dict]:
+    """
+    One-stop API for training script.
+    """
+    if not enabled: return train_rows
+    target_size = int(round(len(train_rows) * size_multiplier))
+    target_size = max(1, target_size)
+    weights = build_resample_weights(train_rows, bucket_weights)
+    new_rows = weighted_resample_rows(train_rows, weights, target_size, seed)
+    return new_rows
 
 def load_gridsybil_pseudo_ident_datasets(
     jsonl_dir: str | Path,
