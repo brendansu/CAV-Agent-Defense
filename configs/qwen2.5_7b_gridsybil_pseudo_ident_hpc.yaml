@@ -2,9 +2,9 @@
 # Global batch per optimizer step ≈ per_device_train_batch_size × WORLD_SIZE × gradient_accumulation_steps
 # Example: batch=8, 4 GPUs, accum=2 → 64 samples/step (vs local 1×8=8 on one GPU).
 # If loss spikes, try a lower learning_rate or reduce batch before accum.
-model_name: Qwen/Qwen2.5-1.5B-Instruct
+model_name: Qwen/Qwen2.5-7B-Instruct
 jsonl_dir: /scratch/YOUR_USERNAME/veremi_collusion/data/gridsybil_pseudo_ident_balanced_a
-output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a
+output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-7b-pseudo-ident-balanced-a
 
 max_seq_len: 4160
 reserve_answer_tokens: 320
