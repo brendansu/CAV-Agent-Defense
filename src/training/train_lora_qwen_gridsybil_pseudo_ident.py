@@ -41,6 +41,7 @@ from .dataset_gridsybil_pseudo_ident import (
     maybe_resample_low_attacker_rows,
     summarize_attacker_bucket_distribution,
 )
+from .gridsybil_pseudo_ident_utils import PROMPT_VARIANTS
 
 
 
@@ -268,6 +269,11 @@ def main() -> None:
     )
     simulate_budget_cutoff = bool(config.get("simulate_budget_cutoff", True))
     add_eos_token = bool(config.get("add_eos_token", True))
+    prompt_variant = str(config.get("prompt_variant", "default")).strip().lower()
+    if prompt_variant not in PROMPT_VARIANTS:
+        raise ValueError(
+            f"Invalid prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+        )
 
     lora_r = int(config.get("lora_r", 16))
     lora_alpha = int(config.get("lora_alpha", 32))
@@ -323,6 +329,7 @@ def main() -> None:
         entity_sort_policy=entity_sort_policy,
         simulate_budget_cutoff=simulate_budget_cutoff,
         add_eos_token=add_eos_token,
+        prompt_variant=prompt_variant,
     )
 
     if resample_low_attacker_enabled:

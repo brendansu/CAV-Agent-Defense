@@ -41,7 +41,10 @@ from transformers import (
 
 from ..training.dataset_gridsybil_pseudo_ident import load_jsonl_rows
 from ..training.dataset_sanity_gridsybil_pseudo_ident import extract_json_array
-from ..training.gridsybil_pseudo_ident_utils import build_pseudo_ident_prompt
+from ..training.gridsybil_pseudo_ident_utils import (
+    PROMPT_VARIANTS,
+    build_pseudo_ident_prompt,
+)
 
 EvalMode = Literal["base", "lora", "both"]
 LOG_TIER_FIELDS: Dict[str, Set[str]] = {
@@ -112,6 +115,7 @@ class EvalConfig:
     log_pseudo_path: str | None
     log_tiers: Set[str]
     log_gzip: bool
+    prompt_variant: str
 
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:
@@ -192,6 +196,12 @@ def parse_args() -> EvalConfig:
         action="store_true",
         help="Disable gzip wrapper when --log_pseudo_path does not end with .gz.",
     )
+    p.add_argument(
+        "--prompt_variant",
+        type=str,
+        default=None,
+        help="Override YAML prompt_variant (default / strict_empty). If unset, read from --config.",
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -204,6 +214,15 @@ def parse_args() -> EvalConfig:
     max_seq_len = int(y.get("max_seq_len", 4096))
     reserve = int(y.get("reserve_answer_tokens", 256))
     max_new = int(args.max_new_tokens) if args.max_new_tokens is not None else reserve
+    prompt_variant = (
+        str(args.prompt_variant).strip().lower()
+        if args.prompt_variant is not None
+        else str(y.get("prompt_variant", "default")).strip().lower()
+    )
+    if prompt_variant not in PROMPT_VARIANTS:
+        raise ValueError(
+            f"Invalid prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+        )
 
     if args.mode in ("lora", "both") and args.lora_dir is None:
         raise ValueError("--lora_dir is required for mode=lora or both.")
@@ -240,6 +259,7 @@ def parse_args() -> EvalConfig:
         log_pseudo_path=args.log_pseudo_path,
         log_tiers=log_tiers,
         log_gzip=not args.no_log_gzip,
+        prompt_variant=prompt_variant,
     )
 
 
@@ -486,6 +506,7 @@ def run_eval(
             total_budget=cfg.max_seq_len,
             reserve_answer_tokens=cfg.reserve_answer_tokens,
             entity_sort_policy=cfg.entity_sort_policy,
+            prompt_variant=cfg.prompt_variant,
         )
         prompt_text = pb.prompt_text
         visible_candidates = list(pb.visible_candidate_ids)
@@ -784,6 +805,7 @@ def main() -> None:
                 "log_pseudo_path": cfg.log_pseudo_path,
                 "log_tiers": sorted(cfg.log_tiers),
                 "log_gzip": cfg.log_gzip,
+                "prompt_variant": cfg.prompt_variant,
             },
             indent=2,
             ensure_ascii=False,

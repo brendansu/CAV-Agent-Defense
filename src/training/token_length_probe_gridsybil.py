@@ -99,6 +99,13 @@ def parse_args() -> argparse.Namespace:
         choices=["none", "msgs_lifetime_distance", "distance_msgs_lifetime"],
         help="Policy to prioritize pseudo entities when truncating.",
     )
+    ap.add_argument(
+        "--prompt_variant",
+        type=str,
+        default="default",
+        choices=["default", "strict_empty"],
+        help="Prompt instruction variant (must match training/eval YAML).",
+    )
     return ap.parse_args()
 
 
@@ -137,6 +144,7 @@ def build_probe_prompt(
     total_budget: int,
     reserve_answer_tokens: int,
     entity_sort_policy: str,
+    prompt_variant: str = "default",
 ) -> Tuple[str, Dict[str, Any]]:
     prompt_build: GridSybilPseudoIdentPrompt = build_pseudo_ident_prompt(
         sample=sample,
@@ -145,6 +153,7 @@ def build_probe_prompt(
         total_budget=total_budget,
         reserve_answer_tokens=reserve_answer_tokens,
         entity_sort_policy=entity_sort_policy,
+        prompt_variant=prompt_variant,
     )
     prompt = prompt_build.prompt_text
     if include_output:
@@ -279,7 +288,8 @@ def main() -> None:
 
     print(
         f"Tokenizer: {args.model_name} | split={args.split} | max_samples={args.max_samples} "
-        f"| include_output={args.include_output} | simulate_budget_cutoff={args.simulate_budget_cutoff}",
+        f"| include_output={args.include_output} | simulate_budget_cutoff={args.simulate_budget_cutoff} "
+        f"| prompt_variant={args.prompt_variant}",
         flush=True,
     )
     if args.simulate_budget_cutoff:
@@ -322,6 +332,7 @@ def main() -> None:
                 total_budget=args.total_budget,
                 reserve_answer_tokens=args.reserve_answer_tokens,
                 entity_sort_policy=args.entity_sort_policy,
+                prompt_variant=args.prompt_variant,
             )
             n_tokens = len(tokenizer(prompt, truncation=False)["input_ids"])
             lengths.append(n_tokens)

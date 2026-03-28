@@ -25,6 +25,7 @@ class GridSybilPseudoIdentDatasetConfig:
     entity_sort_policy: str = "msgs_lifetime_distance"
     simulate_budget_cutoff: bool = True
     add_eos_token: bool = True
+    prompt_variant: str = "default"
 
 
 class ListBackedDataset(Dataset):
@@ -79,6 +80,7 @@ def tokenize_gridsybil_pseudo_ident_example(
         total_budget=config.max_seq_len,
         reserve_answer_tokens=config.reserve_answer_tokens,
         entity_sort_policy=config.entity_sort_policy,
+        prompt_variant=config.prompt_variant,
     )
     target_ids_visible = list(prompt_build.visible_output_ids)
     prompt_ids = tokenizer(
@@ -219,6 +221,7 @@ def load_gridsybil_pseudo_ident_datasets(
     entity_sort_policy: str = "msgs_lifetime_distance",
     simulate_budget_cutoff: bool = True,
     add_eos_token: bool = True,
+    prompt_variant: str = "default",
 ) -> Tuple[Dataset, Dataset, Dataset]:
     config = GridSybilPseudoIdentDatasetConfig(
         jsonl_dir=Path(jsonl_dir),
@@ -227,6 +230,7 @@ def load_gridsybil_pseudo_ident_datasets(
         entity_sort_policy=entity_sort_policy,
         simulate_budget_cutoff=simulate_budget_cutoff,
         add_eos_token=add_eos_token,
+        prompt_variant=prompt_variant,
     )
     raw_splits = load_raw_gridsybil_pseudo_ident_splits(config)
 

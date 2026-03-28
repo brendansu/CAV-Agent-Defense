@@ -15,7 +15,7 @@ from .dataset_gridsybil_pseudo_ident import (
     GridSybilPseudoIdentDatasetConfig,
     tokenize_gridsybil_pseudo_ident_example,
 )
-from .gridsybil_pseudo_ident_utils import build_pseudo_ident_prompt
+from .gridsybil_pseudo_ident_utils import PROMPT_VARIANTS, build_pseudo_ident_prompt
 
 
 def read_jsonl_rows(path: Path) -> List[Dict[str, Any]]:
@@ -135,6 +135,11 @@ def main() -> None:
     entity_sort_policy = str(cfg["entity_sort_policy"])
     simulate_budget_cutoff = bool(cfg["simulate_budget_cutoff"])
     add_eos_token = bool(cfg["add_eos_token"])
+    prompt_variant = str(cfg.get("prompt_variant", "default")).strip().lower()
+    if prompt_variant not in PROMPT_VARIANTS:
+        raise ValueError(
+            f"Invalid prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
@@ -147,6 +152,7 @@ def main() -> None:
         entity_sort_policy=entity_sort_policy,
         simulate_budget_cutoff=simulate_budget_cutoff,
         add_eos_token=add_eos_token,
+        prompt_variant=prompt_variant,
     )
 
     split_names = ["train", "val", "test"] if args.split == "all" else [args.split]
@@ -226,6 +232,7 @@ def main() -> None:
                 total_budget=dataset_cfg.max_seq_len,
                 reserve_answer_tokens=dataset_cfg.reserve_answer_tokens,
                 entity_sort_policy=dataset_cfg.entity_sort_policy,
+                prompt_variant=dataset_cfg.prompt_variant,
             )
             visible_output_ids = list(prompt_build.visible_output_ids)
 

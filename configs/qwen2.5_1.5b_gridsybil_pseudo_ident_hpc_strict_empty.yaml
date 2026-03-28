@@ -4,7 +4,7 @@
 # If loss spikes, try a lower learning_rate or reduce batch before accum.
 model_name: Qwen/Qwen2.5-1.5B-Instruct
 jsonl_dir: /scratch/YOUR_USERNAME/veremi_collusion/data/gridsybil_pseudo_ident_balanced_a
-output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-resample321
+output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a-strict-empty
 
 max_seq_len: 4160
 reserve_answer_tokens: 320
@@ -39,12 +39,4 @@ save_total_limit: 3
 max_eval_samples: 2048
 report_to: []
 
-resample_low_attacker_enabled: true
-resample_seed: 42
-resample_target_size_multiplier: 1.0
-resample_bucket_weights:
-  0_to_1: 3.0
-  2_to_4: 2.0
-  5_to_8: 1.0
-  9_to_14: 1.0
-  more_than_14: 1.0
+prompt_variant: strict_empty # default / strict_empty

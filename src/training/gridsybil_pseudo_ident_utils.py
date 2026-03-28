@@ -2,7 +2,52 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+
+PROMPT_VARIANTS: Tuple[str, ...] = ("default", "strict_empty")
+
+
+def role_lines_for_prompt_variant(prompt_variant: str) -> List[str]:
+    """Instruction + output-rules block (through 'Episode summary:') for a prompt variant."""
+    v = str(prompt_variant).strip().lower()
+    if v == "default":
+        return [
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Identify which pseudo local IDs are attacker-controlled in this episode.",
+            "",
+            "Output rules:",
+            "- Return ONLY one JSON array of pseudo local IDs.",
+            "- Predict only from the pseudo IDs shown in the entity lines below.",
+            '- Use ascending order, for example ["p1","p4"].',
+            "- Do not repeat IDs.",
+            "- If none are attacker-controlled, return [].",
+            "- Do not output explanations or extra text.",
+            "",
+            "Episode summary:",
+        ]
+    if v == "strict_empty":
+        return [
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Identify which pseudo local IDs are attacker-controlled in this episode.",
+            "",
+            "Output rules:",
+            "- Return ONLY one JSON array of pseudo local IDs.",
+            "- Every ID in your answer must appear in the entity lines below; never invent IDs.",
+            '- Use ascending order, for example ["p1","p4"].',
+            "- Do not repeat IDs.",
+            "- If evidence is weak, ambiguous, or insufficient, return []. Prefer false negatives over false positives.",
+            "- If none are attacker-controlled, return [].",
+            "- Do not output explanations or extra text.",
+            "",
+            "Episode summary:",
+        ]
+    raise ValueError(
+        f"Unknown prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+    )
 
 
 @dataclass
@@ -111,6 +156,7 @@ def build_pseudo_ident_prompt(
     total_budget: int,
     reserve_answer_tokens: int,
     entity_sort_policy: str,
+    prompt_variant: str = "default",
 ) -> GridSybilPseudoIdentPrompt:
     inp = sample.get("input", {})
     meta = inp.get("meta", {})
@@ -121,22 +167,7 @@ def build_pseudo_ident_prompt(
     candidates = inp.get("candidate_pseudo_local_ids", [])
     attacker_full_ids = list(sample.get("output_ids", []))
 
-    role_lines: List[str] = [
-        "You are an onboard CAV intrusion-detection model.",
-        "",
-        "Task:",
-        "Identify which pseudo local IDs are attacker-controlled in this episode.",
-        "",
-        "Output rules:",
-        "- Return ONLY one JSON array of pseudo local IDs.",
-        "- Predict only from the pseudo IDs shown in the entity lines below.",
-        '- Use ascending order, for example ["p1","p4"].',
-        "- Do not repeat IDs.",
-        "- If none are attacker-controlled, return [].",
-        "- Do not output explanations or extra text.",
-        "",
-        "Episode summary:",
-    ]
+    role_lines = role_lines_for_prompt_variant(prompt_variant)
     summary_lines: List[str] = []
     summary_lines.append(f"- traffic_regime: {meta.get('traffic_regime', 'unknown')}")
     win = meta.get("window", {})
