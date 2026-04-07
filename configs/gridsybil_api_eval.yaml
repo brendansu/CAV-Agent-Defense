@@ -1,0 +1,36 @@
+# 用于 GPT-5.4 zero-shot / few-shot 评测 GridSybil pseudo-ident 的配置
+
+# 1) 与本地 LoRA eval 对齐的 prompt / tokenizer 设置
+tokenizer_model_name: Qwen/Qwen2.5-7B-Instruct
+
+# 本地 jsonl 数据目录（改成你本机或集群上的路径）
+jsonl_dir: data/processed/jsonl/gridsybil_pseudo_ident_balanced_a
+split: test
+
+max_seq_len: 4160
+reserve_answer_tokens: 320
+entity_sort_policy: msgs_lifetime_distance
+simulate_budget_cutoff: true
+add_eos_token: true
+prompt_variant: default  # 或 strict_empty，看你要对齐的实验
+
+# 2) OpenAI / GPT-5.4 相关（按你控制台的实际 model id 改）
+openai_model: gpt-5.4-2026-03-05
+max_completion_tokens: 128
+temperature: 0.0
+
+# 3) eval set 与 zero/few-shot 配置
+# 下面两个文件稍后由 manifest 生成脚本产出，这里先约定好路径
+test_id_file: configs/eval_sets/gridsybil_test_150_ids.txt
+
+# zero-shot: shot_mode=zero，few_shot_id_file 可以忽略
+# few-shot:  shot_mode=few，并填好 few_shot_id_file
+shot_mode: zero          # zero / few
+
+# 仅在 few-shot 模式下使用：来自 train.jsonl 的 few-shot 例题 id 列表
+few_shot_id_file: configs/eval_sets/gridsybil_few_shot_k8_train_ids.yaml
+
+# 4) 评测与日志控制（可选，按需要扩展）
+max_samples: 0           # 0 表示用 test_id_file 列表全部；>0 可再截断
+log_raw_responses: false # 如要保存每条 raw 输出，可在脚本里读取这个开关
+run_id: api_gpt54_eval   # 写入输出文件名/metrics_json 里用于区分 run
