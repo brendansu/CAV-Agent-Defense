@@ -1,0 +1,71 @@
+#!/bin/bash
+#SBATCH --job-name=veremi-eval-plausibility-50k-base
+#SBATCH --partition=work1
+#SBATCH --time=02:00:00
+#SBATCH --mem=8gb
+#SBATCH --cpus-per-task=1
+#SBATCH --gpus-per-node=a100:1
+#SBATCH --array=0-7
+#SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_plausibility_base_50k/log_%A_%a.out
+#SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_plausibility_base_50k/log_%A_%a.err
+
+set -euo pipefail
+
+WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
+CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility_50k.yaml}"
+SPLIT="${SPLIT:-test}"  # val / test
+RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+
+NUM_SHARDS=8
+SHARD_INDEX=${SLURM_ARRAY_TASK_ID}
+
+# 0 = all samples in the split (after sharding)
+MAX_SAMPLES="${MAX_SAMPLES:-0}"
+# empty means use reserve_answer_tokens from YAML
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-}"
+
+module load cuda/12.3.0
+module load anaconda3/2023.09-0
+source "$(conda info --base)/etc/profile.d/conda.sh"
+source activate veremi
+
+cd "$WORK_DIR"
+
+echo "WORK_DIR=$WORK_DIR"
+echo "CONFIG=$CONFIG"
+echo "SPLIT=$SPLIT"
+echo "RUN_ID=$RUN_ID"
+echo "NUM_SHARDS=$NUM_SHARDS"
+echo "SHARD_INDEX=$SHARD_INDEX"
+echo "MAX_SAMPLES=$MAX_SAMPLES"
+echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
+
+if [[ "$SPLIT" != "val" && "$SPLIT" != "test" ]]; then
+  echo "[ERROR] SPLIT must be val or test, got: $SPLIT" >&2
+  exit 2
+fi
+
+if [[ -n "$MAX_NEW_TOKENS" ]]; then
+  srun python -m src.eval.eval_gridsybil_plausibility \
+    --config "$CONFIG" \
+    --mode base \
+    --split "$SPLIT" \
+    --max_samples "$MAX_SAMPLES" \
+    --print_predictions 0 \
+    --show_examples 0 \
+    --num_shards "$NUM_SHARDS" \
+    --shard_index "$SHARD_INDEX" \
+    --run_id "$RUN_ID" \
+    --max_new_tokens "$MAX_NEW_TOKENS"
+else
+  srun python -m src.eval.eval_gridsybil_plausibility \
+    --config "$CONFIG" \
+    --mode base \
+    --split "$SPLIT" \
+    --max_samples "$MAX_SAMPLES" \
+    --print_predictions 0 \
+    --show_examples 0 \
+    --num_shards "$NUM_SHARDS" \
+    --shard_index "$SHARD_INDEX" \
+    --run_id "$RUN_ID"
+fi

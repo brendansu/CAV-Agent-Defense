@@ -56,6 +56,7 @@ class EvalConfig:
     prompt_include_prefixes: List[str]
     prompt_include_columns: List[str]
     feature_name_style: str
+    progress_every_samples: int
 
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:
@@ -120,6 +121,12 @@ def parse_args() -> EvalConfig:
         default=None,
         help="Override YAML prompt_variant. If unset, read from --config.",
     )
+    p.add_argument(
+        "--progress_every_samples",
+        type=int,
+        default=5000,
+        help="Print progress every N evaluated samples (0 disables periodic progress).",
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -179,6 +186,7 @@ def parse_args() -> EvalConfig:
         prompt_include_prefixes=prompt_include_prefixes,
         prompt_include_columns=prompt_include_columns,
         feature_name_style=feature_name_style,
+        progress_every_samples=max(0, int(args.progress_every_samples)),
     )
 
 
@@ -357,10 +365,20 @@ def run_eval(
                     "sender_id": ex.get("sender_id"),
                 }
             )
-        if (i + 1) % 100 == 0 or (i + 1) == n:
+        if (
+            (cfg.progress_every_samples > 0 and (i + 1) % cfg.progress_every_samples == 0)
+            or (i + 1) == n
+        ):
             elapsed = time.time() - t0
             rate = (i + 1) / elapsed if elapsed > 0 else 0.0
-            print(f"  progress {i + 1}/{n} ({rate:.2f} samples/s)", flush=True)
+            remaining = max(0, n - (i + 1))
+            eta_s = (remaining / rate) if rate > 0 else float("inf")
+            eta_text = f"{eta_s:.1f}s" if eta_s != float("inf") else "inf"
+            print(
+                f"  progress {i + 1}/{n} "
+                f"elapsed={elapsed:.1f}s rate={rate:.2f} samples/s eta={eta_text}",
+                flush=True,
+            )
 
     metrics = aggregate_metrics(tp, fp, fn, tn)
     elapsed = time.time() - t0

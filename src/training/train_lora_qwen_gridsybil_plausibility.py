@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -23,6 +24,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    TrainerCallback,
     Trainer,
     TrainingArguments,
 )
@@ -66,6 +68,52 @@ class WeightedLabelTrainer(Trainer):
             loss = (per_sample_loss * w).sum() / w.sum().clamp_min(1e-8)
 
         return (loss, outputs) if return_outputs else loss
+
+
+class ProgressETACallback(TrainerCallback):
+    """Print elapsed time and ETA on trainer log events."""
+
+    def __init__(self) -> None:
+        self._t0: float | None = None
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self._t0 = time.time()
+        if _local_rank() == 0:
+            print("[train] started", flush=True)
+        return control
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if _local_rank() != 0:
+            return control
+        if self._t0 is None:
+            return control
+        if not logs:
+            return control
+        step = int(state.global_step)
+        elapsed = time.time() - self._t0
+        max_steps = int(state.max_steps) if state.max_steps is not None else 0
+        if step > 0 and max_steps > 0:
+            steps_left = max(0, max_steps - step)
+            sec_per_step = elapsed / step
+            eta = steps_left * sec_per_step
+            pct = 100.0 * step / max_steps
+            print(
+                f"[train] step={step}/{max_steps} ({pct:.1f}%) "
+                f"elapsed={elapsed:.1f}s eta={eta:.1f}s",
+                flush=True,
+            )
+        else:
+            print(
+                f"[train] step={step} elapsed={elapsed:.1f}s",
+                flush=True,
+            )
+        return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if _local_rank() == 0 and self._t0 is not None:
+            elapsed = time.time() - self._t0
+            print(f"[train] finished elapsed={elapsed:.1f}s", flush=True)
+        return control
 
 
 def parse_args() -> argparse.Namespace:
@@ -264,6 +312,7 @@ def summarize_dataset(ds, name: str) -> None:
 
 
 def main() -> None:
+    t_main_start = time.time()
     args = parse_args()
     config = load_config(args.config)
     if args.output_dir is not None:
@@ -306,6 +355,7 @@ def main() -> None:
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
 
+    t_model_start = time.time()
     tokenizer, model = setup_tokenizer_and_model(
         model_name=model_name,
         lora_r=lora_r,
@@ -313,7 +363,13 @@ def main() -> None:
         lora_dropout=lora_dropout,
         target_modules=target_modules,
     )
+    if _local_rank() == 0:
+        print(
+            f"[time] model+tokenizer setup elapsed={time.time() - t_model_start:.1f}s",
+            flush=True,
+        )
 
+    t_data_start = time.time()
     train_ds, val_ds, test_ds = load_gridsybil_plausibility_datasets(
         parquet_dir=parquet_dir,
         tokenizer=tokenizer,
@@ -335,6 +391,10 @@ def main() -> None:
     )
 
     if _local_rank() == 0:
+        print(
+            f"[time] dataset load+tokenize elapsed={time.time() - t_data_start:.1f}s",
+            flush=True,
+        )
         print(f"Train dataset size: {len(train_ds)}", flush=True)
         print(f"Val dataset size:   {len(val_ds)}", flush=True)
         print(f"Test dataset size:  {len(test_ds)}", flush=True)
@@ -361,13 +421,24 @@ def main() -> None:
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
+        callbacks=[ProgressETACallback()],
     )
+    t_train_start = time.time()
     trainer.train()
+    if _local_rank() == 0:
+        print(
+            f"[time] trainer.train elapsed={time.time() - t_train_start:.1f}s",
+            flush=True,
+        )
     if _local_rank() == 0:
         trainer.save_model(training_args.output_dir)
         tokenizer.save_pretrained(training_args.output_dir)
         print(
             f"Training complete. Model saved to {training_args.output_dir}",
+            flush=True,
+        )
+        print(
+            f"[time] total main elapsed={time.time() - t_main_start:.1f}s",
             flush=True,
         )
 
