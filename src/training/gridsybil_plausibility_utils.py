@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+import json
+import math
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence, Set, Tuple
+
+import numpy as np
+
+PROMPT_VARIANTS: Tuple[str, ...] = (
+    "default",
+    "traffic_neutral",
+    "traffic_benign_prior",
+    "traffic_compact",
+)
+
+DEFAULT_FEATURE_INCLUDE_PREFIXES: Tuple[str, ...] = (
+    "msg_catch_",
+    "ctx_",
+    "msg_valid_history_features",
+    "msg_has_prev_same_pseudo",
+    "msg_dt_prev_same_pseudo",
+    "avail_prev_same_pseudo",
+    "avail_neighbor_context",
+)
+
+DEFAULT_FEATURE_WHITELIST: Tuple[str, ...] = (
+    # D: history/availability
+    "msg_has_prev_same_pseudo",
+    "msg_dt_prev_same_pseudo",
+    "msg_valid_history_features",
+    # E-final-v1
+    "msg_catch_art",
+    "msg_catch_freq",
+    "msg_catch_int_min_neighbor",
+    "msg_catch_int_n_violations",
+    "msg_catch_mgtd",
+    "msg_catch_mgts",
+    "msg_catch_mgtsv",
+    "msg_catch_mgtsvm",
+    "msg_catch_phc",
+    # F-v1
+    "ctx_n_neighbors",
+    "ctx_dist_min",
+    "ctx_dist_mean",
+    "ctx_n_close_5m",
+    "ctx_n_close_10m",
+    "ctx_speed_diff_mean",
+    "ctx_head_diff_mean_deg",
+    "ctx_n_speed_diff_lt_0p5",
+    "ctx_n_head_diff_lt_5deg",
+    "ctx_n_triplet_similar",
+    "ctx_triplet_ratio",
+)
+
+FEATURE_ALIASES: Dict[str, str] = {
+    "msg_has_prev_same_pseudo": "previous message from same pseudonym exists",
+    "msg_dt_prev_same_pseudo": "time since previous message from same pseudonym (s)",
+    "msg_valid_history_features": "same-pseudonym history features valid",
+    "msg_catch_art": "plausibility range consistency (ART)",
+    "msg_catch_maxs": "plausibility max speed consistency",
+    "msg_catch_mgtd": "plausibility movement-gradient displacement consistency",
+    "msg_catch_mgts": "plausibility movement-gradient speed consistency",
+    "msg_catch_mgtsv": "plausibility movement-gradient speed variation",
+    "msg_catch_mgtsvm": "plausibility movement-gradient margin",
+    "msg_catch_freq": "plausibility beacon-frequency consistency",
+    "msg_catch_phc": "plausibility heading-change consistency",
+    "msg_catch_saw": "plausibility spatial-alignment window",
+    "msg_catch_rad": "plausibility receiver absolute distance",
+    "msg_catch_int_self": "plausibility overlap self-intersection ratio",
+    "msg_catch_int_min_neighbor": "plausibility overlap min-neighbor ratio",
+    "msg_catch_int_n_violations": "plausibility overlap violation count",
+    "ctx_n_neighbors": "context neighbor count",
+    "ctx_dist_min": "context neighbor min distance",
+    "ctx_dist_mean": "context neighbor mean distance",
+    "ctx_n_close_5m": "context neighbors within 5 m",
+    "ctx_n_close_10m": "context neighbors within 10 m",
+    "ctx_speed_diff_min": "context neighbor min speed diff",
+    "ctx_speed_diff_mean": "context neighbor mean speed diff",
+    "ctx_head_diff_min_deg": "context neighbor min heading diff (deg)",
+    "ctx_head_diff_mean_deg": "context neighbor mean heading diff (deg)",
+    "ctx_n_speed_diff_lt_0p5": "context neighbors with speed diff < 0.5 m/s",
+    "ctx_n_head_diff_lt_5deg": "context neighbors with heading diff < 5 deg",
+    "ctx_n_triplet_similar": "context similar-triplet count",
+    "ctx_triplet_ratio": "context similar-triplet ratio",
+}
+
+
+@dataclass(frozen=True)
+class PromptVariantSpec:
+    intro_lines: Tuple[str, ...]
+    group_hints: Dict[str, str]
+
+
+_TRAFFIC_GROUP_HINTS: Dict[str, str] = {
+    "History and timing": (
+        "These features show whether the same pseudonym has recent prior messages and "
+        "whether short-history timing is available and consistent."
+    ),
+    "Plausibility checks": (
+        "Traffic sybil messages may show multiple plausibility inconsistencies, such as "
+        "unrealistic motion, overlap conflicts, or abnormal heading/frequency patterns."
+    ),
+    "Neighbor context": (
+        "Traffic sybil behavior may appear as multiple nearby senders with unusually similar "
+        "motion, heading, or local clustering patterns."
+    ),
+}
+
+
+PROMPT_VARIANT_SPECS: Dict[str, PromptVariantSpec] = {
+    "default": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether its sender is attacker-controlled.",
+            "Focus on plausibility checks, short-history consistency, and neighbor-context consistency.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- benign means non-attacker sender; attack means attacker-controlled sender.",
+            "- If evidence is mixed, prefer benign unless multiple checks are clearly suspicious.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints={},
+    ),
+    "traffic_neutral": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled in a traffic sybil scenario.",
+            "",
+            "Decision rule:",
+            "- Use the overall pattern across plausibility checks, short-history consistency, and neighbor-context consistency.",
+            "- Traffic sybil attacks often appear as groups of nearby identities with overly similar motion or implausible local behavior.",
+            "- Do not rely on a single weak anomaly in isolation.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints=_TRAFFIC_GROUP_HINTS,
+    ),
+    "traffic_benign_prior": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled in a traffic sybil scenario.",
+            "",
+            "Decision rule:",
+            "- Use the overall pattern across plausibility checks, short-history consistency, and neighbor-context consistency.",
+            "- Traffic sybil attacks often appear as groups of nearby identities with overly similar motion or implausible local behavior.",
+            "- Do not rely on a single weak anomaly in isolation.",
+            "- If evidence is mixed, prefer benign unless multiple signals are clearly suspicious.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints=_TRAFFIC_GROUP_HINTS,
+    ),
+    "traffic_compact": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model for traffic sybil detection.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled.",
+            "Use plausibility checks, short-history consistency, and neighbor-context consistency together.",
+            "Traffic sybil attacks may appear as nearby identities with implausibly similar local behavior.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints={},
+    ),
+}
+
+
+def role_lines_for_prompt_variant(prompt_variant: str) -> List[str]:
+    v = str(prompt_variant).strip().lower()
+    if v in PROMPT_VARIANT_SPECS:
+        return list(PROMPT_VARIANT_SPECS[v].intro_lines)
+    raise ValueError(
+        f"Unknown prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+    )
+
+
+def group_hint_for_prompt_variant(prompt_variant: str, group: str) -> str | None:
+    v = str(prompt_variant).strip().lower()
+    spec = PROMPT_VARIANT_SPECS.get(v)
+    if spec is None:
+        raise ValueError(
+            f"Unknown prompt_variant={prompt_variant!r}; expected one of {list(PROMPT_VARIANTS)}"
+        )
+    return spec.group_hints.get(group)
+
+
+@dataclass
+class GridSybilPlausibilityPrompt:
+    prompt_text: str
+    fixed_tokens: int
+    feature_line_tokens: List[int]
+    features_total: int
+    features_kept: int
+    is_truncated_features: bool
+    feature_budget: int | None
+    tokens_after_budget_build: int
+    visible_feature_keys: List[str]
+
+
+def _is_missing(x: Any) -> bool:
+    if x is None:
+        return True
+    try:
+        if isinstance(x, float) and math.isnan(x):
+            return True
+        if isinstance(x, np.floating) and np.isnan(x):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def fmt_scalar(x: Any, decimals: int = 3) -> str:
+    if _is_missing(x):
+        return "null"
+    if isinstance(x, (bool, np.bool_)):
+        return "true" if bool(x) else "false"
+    if isinstance(x, (int, np.integer)):
+        return str(int(x))
+    if isinstance(x, (float, np.floating)):
+        v = float(x)
+        if math.isinf(v) or math.isnan(v):
+            return "null"
+        return f"{v:.{decimals}f}"
+    if isinstance(x, str):
+        s = x.replace("\n", " ").strip()
+        return s[:500] + ("..." if len(s) > 500 else "")
+    return json.dumps(x, ensure_ascii=False)[:500]
+
+
+def label_text_from_int(label: int) -> str:
+    return "attack" if int(label) == 1 else "benign"
+
+
+def answer_suffix_text_from_label(label: int) -> str:
+    return f" {label_text_from_int(label)}"
+
+
+_FIRST_BINARY_RE = re.compile(r"[01]")
+_FIRST_ATTACK_RE = re.compile(r"\battack\b", re.IGNORECASE)
+_FIRST_BENIGN_RE = re.compile(r"\bbenign\b", re.IGNORECASE)
+
+
+def parse_prediction_label(text: str) -> Tuple[int | None, bool]:
+    if not text:
+        return None, False
+    s = str(text).strip()
+    if _FIRST_ATTACK_RE.search(s):
+        return 1, True
+    if _FIRST_BENIGN_RE.search(s):
+        return 0, True
+    # Backward-compatible parsing for numeric outputs.
+    m = _FIRST_BINARY_RE.search(s)
+    if not m:
+        return None, False
+    return int(m.group(0)), True
+
+
+def _render_feature_name(key: str, style: str) -> str:
+    s = str(style).strip().lower()
+    if s == "raw":
+        return key
+    if s == "descriptive":
+        if key in FEATURE_ALIASES:
+            return FEATURE_ALIASES[key]
+        return key.replace("_", " ")
+    raise ValueError(f"Unknown feature_name_style={style!r}; expected raw/descriptive")
+
+
+def _feature_group_title(key: str) -> str:
+    if key.startswith("msg_catch_"):
+        return "Plausibility checks"
+    if key.startswith("ctx_"):
+        return "Neighbor context"
+    return "History and timing"
+
+
+def _select_feature_keys(
+    sample: Dict[str, Any],
+    include_prefixes: List[str],
+    include_columns: Sequence[str],
+    exclude_columns: Set[str],
+) -> List[str]:
+    out: List[str] = []
+    include_columns_set = set(include_columns)
+    for k in include_columns:
+        if k in sample and k not in exclude_columns and k not in out:
+            out.append(k)
+    for k in sorted(sample.keys()):
+        if k in exclude_columns or k in out:
+            continue
+        if k in include_columns_set or any(k.startswith(p) for p in include_prefixes):
+            out.append(k)
+    return out
+
+
+def build_plausibility_prompt(
+    sample: Dict[str, Any],
+    tokenizer: Any,
+    simulate_budget_cutoff: bool,
+    total_budget: int,
+    reserve_answer_tokens: int,
+    prompt_variant: str,
+    feature_name_style: str,
+    include_prefixes: List[str] | None,
+    include_columns: Set[str] | None,
+    exclude_columns: Set[str],
+) -> GridSybilPlausibilityPrompt:
+    role_lines = role_lines_for_prompt_variant(prompt_variant)
+    include_prefixes = list(include_prefixes or [])
+    include_columns = list(include_columns or DEFAULT_FEATURE_WHITELIST)
+    feature_keys = _select_feature_keys(
+        sample=sample,
+        include_prefixes=include_prefixes,
+        include_columns=include_columns,
+        exclude_columns=exclude_columns,
+    )
+    per_feature_lines: List[str] = []
+    group_by_key: Dict[str, str] = {}
+    for k in feature_keys:
+        group = _feature_group_title(k)
+        group_by_key[k] = group
+        per_feature_lines.append(
+            f"- {_render_feature_name(k, feature_name_style)}: {fmt_scalar(sample.get(k))}"
+        )
+    feature_line_tokens = [
+        len(tokenizer(line, truncation=False, add_special_tokens=False)["input_ids"])
+        for line in per_feature_lines
+    ]
+
+    footer = ["", "Answer:"]
+    fixed_text_no_features = "\n".join(role_lines)
+    fixed_with_footer = "\n".join([fixed_text_no_features, *footer])
+    fixed_tokens = len(
+        tokenizer(fixed_with_footer, truncation=False, add_special_tokens=False)["input_ids"]
+    )
+
+    if not simulate_budget_cutoff:
+        body_lines: List[str] = []
+        last_group: str | None = None
+        for k, line in zip(feature_keys, per_feature_lines):
+            group = group_by_key[k]
+            if group != last_group:
+                body_lines.append(f"[{group}]")
+                group_hint = group_hint_for_prompt_variant(prompt_variant, group)
+                if group_hint:
+                    body_lines.append(group_hint)
+                last_group = group
+            body_lines.append(line)
+        prompt_text = "\n".join([fixed_text_no_features, *body_lines, *footer])
+        tokens_after_budget_build = len(
+            tokenizer(prompt_text, truncation=False, add_special_tokens=False)["input_ids"]
+        )
+        return GridSybilPlausibilityPrompt(
+            prompt_text=prompt_text,
+            fixed_tokens=fixed_tokens,
+            feature_line_tokens=feature_line_tokens,
+            features_total=len(per_feature_lines),
+            features_kept=len(feature_keys),
+            is_truncated_features=False,
+            feature_budget=None,
+            tokens_after_budget_build=tokens_after_budget_build,
+            visible_feature_keys=list(feature_keys),
+        )
+
+    feature_budget = max(0, total_budget - fixed_tokens - reserve_answer_tokens)
+    kept = 0
+    token_sum = 0
+    truncated = False
+    visible_per_feature_lines: List[str] = []
+    visible_keys: List[str] = []
+    for k, line, tok in zip(feature_keys, per_feature_lines, feature_line_tokens):
+        if token_sum + tok <= feature_budget:
+            visible_per_feature_lines.append(line)
+            visible_keys.append(k)
+            token_sum += tok
+            kept += 1
+        else:
+            truncated = True
+            break
+
+    if kept == 0 and per_feature_lines:
+        visible_per_feature_lines = [per_feature_lines[0]]
+        visible_keys = [feature_keys[0]]
+        kept = 1
+        truncated = len(per_feature_lines) > 1
+
+    visible_lines: List[str] = []
+    last_group = None
+    for k, line in zip(visible_keys, visible_per_feature_lines):
+        group = group_by_key[k]
+        if group != last_group:
+            visible_lines.append(f"[{group}]")
+            group_hint = group_hint_for_prompt_variant(prompt_variant, group)
+            if group_hint:
+                visible_lines.append(group_hint)
+            last_group = group
+        visible_lines.append(line)
+
+    prompt_text = "\n".join([fixed_text_no_features, *visible_lines, *footer])
+    tokens_after_budget_build = len(
+        tokenizer(prompt_text, truncation=False, add_special_tokens=False)["input_ids"]
+    )
+    return GridSybilPlausibilityPrompt(
+        prompt_text=prompt_text,
+        fixed_tokens=fixed_tokens,
+        feature_line_tokens=feature_line_tokens,
+        features_total=len(per_feature_lines),
+        features_kept=kept,
+        is_truncated_features=truncated,
+        feature_budget=feature_budget,
+        tokens_after_budget_build=tokens_after_budget_build,
+        visible_feature_keys=visible_keys,
+    )

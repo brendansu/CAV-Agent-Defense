@@ -1,0 +1,88 @@
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+parquet_dir: data/processed/plausibility_messages_split
+output_dir: outputs/qwen2.5-1.5b-gridsybil-plausibility
+
+max_seq_len: 4096
+reserve_answer_tokens: 32
+simulate_budget_cutoff: true
+add_eos_token: true
+prompt_variant: default
+feature_name_style: descriptive
+
+prompt_exclude_columns:
+  - label
+  - schema_version
+  - source_file
+  - source_line_idx
+  - sender_id
+  - sender_pseudo
+  - sender_attack_flag
+  - receiver_attack_flag
+
+# Freeze whitelist explicitly (D + E-final-v1 + F-v1).
+prompt_include_prefixes: []
+prompt_include_columns:
+  # D
+  - msg_has_prev_same_pseudo
+  - msg_dt_prev_same_pseudo
+  - msg_valid_history_features
+  # E-final-v1
+  - msg_catch_art
+  - msg_catch_freq
+  - msg_catch_int_min_neighbor
+  - msg_catch_int_n_violations
+  - msg_catch_mgtd
+  - msg_catch_mgts
+  - msg_catch_mgtsv
+  - msg_catch_mgtsvm
+  - msg_catch_phc
+  # F-v1
+  - ctx_n_neighbors
+  - ctx_dist_min
+  - ctx_dist_mean
+  - ctx_n_close_5m
+  - ctx_n_close_10m
+  - ctx_speed_diff_mean
+  - ctx_head_diff_mean_deg
+  - ctx_n_speed_diff_lt_0p5
+  - ctx_n_head_diff_lt_5deg
+  - ctx_n_triplet_similar
+  - ctx_triplet_ratio
+
+# Optional subsampling to avoid full in-memory tokenization on very large parquet splits.
+# 0 means use all rows.
+max_train_rows: 200000
+max_val_rows: 50000
+max_test_rows: 50000
+subsample_seed: 42
+
+# Class weighting on supervised label token(s): attack=1, benign=0.
+attack_sample_weight: 1.5
+benign_sample_weight: 1.0
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 8
+num_train_epochs: 1.0
+max_steps: 300
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+
+logging_steps: 50
+eval_strategy: steps
+eval_steps: 200
+save_strategy: steps
+save_steps: 200
+save_total_limit: 2
+max_eval_samples: 512
+report_to: []

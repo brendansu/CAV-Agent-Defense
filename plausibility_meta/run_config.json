@@ -1,0 +1,47 @@
+{
+  "schema_version": "a_prime_v1",
+  "config": {
+    "input_glob": "c:/cursorprojects/veremi_collusion/data/raw/GridSybil_0709/VeReMi_25200_28800_2025-11-15_13_57_9/traceJSON-10569-10567-A0-25208-7.json",
+    "output_dir": "c:/cursorprojects/veremi_collusion/plausibility_messages",
+    "meta_dir": "c:/cursorprojects/veremi_collusion/plausibility_meta",
+    "output_format": "parquet",
+    "context_window_sec": 1.0,
+    "context_radius_m": 30.0,
+    "neighbor_cap": 20,
+    "vehicle_width_m": 2.0,
+    "vehicle_length_m": 5.0,
+    "min_conf_eps": 0.001,
+    "sim_dist_thresh_m": 10.0,
+    "sim_speed_thresh_mps": 0.5,
+    "sim_heading_thresh_deg": 10.0,
+    "workers": 1
+  },
+  "f2md_params": {
+    "MAX_PROXIMITY_RANGE_L": 30.0,
+    "MAX_PROXIMITY_RANGE_W": 3.0,
+    "MAX_PROXIMITY_DISTANCE": 2.0,
+    "MAX_PLAUSIBLE_RANGE": 420.0,
+    "MAX_TIME_DELTA": 3.1,
+    "MAX_DELTA_INTER": 2.0,
+    "MAX_SA_RANGE": 420.0,
+    "MAX_SA_TIME": 2.1,
+    "MIN_MAX_SPEED": 40.0,
+    "MIN_MAX_ACCEL": 3.0,
+    "MIN_MAX_DECEL": 4.5,
+    "MAX_MGT_RNG": 4.0,
+    "MAX_MGT_RNG_DOWN": 6.2,
+    "MAX_MGT_RNG_UP": 2.1,
+    "MAX_BEACON_FREQUENCY": 0.9,
+    "MAX_HEADING_CHANGE": 90.0,
+    "POS_HEADING_TIME": 1.1
+  },
+  "stats": {
+    "num_files": 1,
+    "num_rows": 1454,
+    "num_episodes": 1,
+    "num_receivers": 1,
+    "output_format_requested": "parquet",
+    "output_format_actual": "jsonl",
+    "output_path": "c:/cursorprojects/veremi_collusion/plausibility_messages/message_features.jsonl"
+  }
+}
