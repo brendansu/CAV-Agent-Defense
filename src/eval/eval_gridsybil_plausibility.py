@@ -124,7 +124,7 @@ def parse_args() -> EvalConfig:
     p.add_argument(
         "--progress_every_samples",
         type=int,
-        default=5000,
+        default=50,
         help="Print progress every N evaluated samples (0 disables periodic progress).",
     )
     args = p.parse_args()
