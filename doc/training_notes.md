@@ -429,3 +429,45 @@
     - F1(ATTACK) 从 ~0.38 提升到 ~0.89；
     - Recall(ATTACK) 从 ~0.24 提升到 ~0.82，且保持高 precision。
   - 这说明在当前 Phase 1 设定下，**数据规模与分层采样质量** 对攻击检测性能的提升非常关键；在 100k 级别上已经能显著超越 base 和 50k debug 上的 LoRA。
+
+### 任务重心转移：从 Phase 1 VeReMi 到 GridSybil / Traffic Sybil（2026-03 起）
+
+- **Phase 1 小结（至 2026-03-07）**：在原始 VeReMi、按 `(label, attacker_type)` 分层的约 100k 训练子集上，1 epoch LoRA 在 1-of-8 test 上已达到 **Accuracy ≈ 0.966、F1(ATTACK) ≈ 0.891**（见上一节），说明在**经典 per-message 窗口二分类**设定下模型已很强。
+- **新焦点**：更有挑战的 **Sybil 类攻击**，尤其是 **traffic / ghost-traffic（GridSybil）**；数据与标签逻辑不再完全沿用 Phase 1 的 `attack_msg` 残差阈值，而是结合 **VeReMi Extension（GridSybil）** 的接收端 trace 与场景语义。
+
+### Episode 级数据管线与 pseudo-identity v1（约 2026-03-19 — 03-24）
+
+- **Episode builder v2**（`src/data/episode_builder.py`）： richer GridSybil 特征、时间 IoU 聚类、与 **pseudo entity / group** 相关的结构；在 Palmetto 上对多个 GridSybil run 做了全量构建（见 `scripts/build_episode_run.slurm` 等）。
+- **GridSybil_1416 标签问题**：早期用接收端「同一 sender 多 pseudo」启发式时，与 GT 不一致（GT 报 0 Sybil sender 仍大量正例）；后续改为以 **`traceJSON-...-A16/A0-...` 文件名** 解析车辆是否为 attacker（`identity_source = "filename_attack_flag"`），将监督与 **文件名级真值** 对齐。
+- **训练任务（第一版）**：**pseudo entity identification** — 输入 `meta + ego + region + pseudo_entities`，输出 attacker 的 **pseudo local id 集合**（JSON 数组）；与 Phase 1 类似的 **instruction / input / output** JSONL，便于复用 LoRA 训练框架。
+- **产物目录示例**：`data/processed/jsonl/` 下 gridsybil pseudo-ident 拆分；episode 源可记为 `episodes_gridsybil_pseudo_identity_v1`（见各 transcript 中的路径约定）。
+- **训练 / 评测代码**：
+  - 训练：`src/training/train_lora_qwen_gridsybil_pseudo_ident.py`，配置如 `configs/qwen2.5_1.5b_gridsybil_pseudo_ident.yaml`、`configs/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc.yaml`（HPC 单机多卡 DDP、`torchrun`）。
+  - 评测：`src/eval/eval_gridsybil_pseudo_ident.py` — **micro** 指标在 **visible candidate** 上对每个 pseudo id 做二分类聚合；另含 **exact match**、按 `n_visible_attackers` 等 **bucket** 分析；后续增加了 **per-pseudo 行级 logging** 便于误差分析。
+  - 多 shard 聚合：`src/eval/metric_integration.py` 已扩展到 gridsybil 口径（`tp/fp/fn/tn`、`episode_exact_match`、`parse_ok` 等）。
+
+### 超参探索与 7B、API 基线（约 2026-03-27 — 04-03）
+
+在同一 **pseudo-ident** 任务与评测口径下，曾系统尝试：
+
+- **LoRA rank**、对 **attacker 稀疏 bucket** 的 **resample**、**strict_empty** 等 prompt 变体（压低 FP、尤其在「可见 attacker 很少」的段）。
+- **换底座**：**Qwen2.5-7B + LoRA** 相对 **1.5B** 带来 **一致且最大的整体提升**（transcript 中一例：test 上 **micro accuracy ≈ 0.839、micro F1 ≈ 0.867、exact match ≈ 0.225**，且 0–1 attacker bucket 上亦优于 1.5B 各档）；**resample / strict prompt** 相对默认 1.5B 有取舍，但不如换 7B 显著。
+- **API 强基线**：**GPT 系 zero-shot** 在约 **150 episodes** 子集上 **accuracy 约 62%** 量级，**低于** 同设定下 **7B LoRA（约 84% accuracy）** — 用作上界参考而非替代端侧模型；完整 API 评测脚本与配置见 `src/eval/eval_gridsybil_pseudo_ident_api.py` 及对应 yaml（见 2026-04-03 transcript）。
+
+**阶段性结论**：在 GridSybil pseudo-ident 这条线上，**增大 foundation model（7B）+ LoRA** 性价比最高；难 bucket 上仍需结合 **bucket 指标** 与 **per-pseudo 日志** 继续挖潜，而非单看全局 accuracy。
+
+### Message-level plausibility 管线（约 2026-04-13 起）
+
+- **动机**：与 **F2MD**（VeReMi Extension 官方工具链思路）及文献中 **message-level** IDS 评测对齐，便于与外部 **benchmark** 对比；粒度从 **episode 集合预测** 扩展到 **逐条 Type3（及与 Type2/ego 对齐）** 的可信度 / 攻击相关标签。
+- **设计讨论要点**（见 `doc/transcripts/2026-04-13_gridsybil-plausibility-message-data-pipeline.md`）：Type2=ego、Type3=邻车声称；输出可为 **per-message**、**per-sender** 或 **per-window** 多任务；若引入 **跨 episode 状态** 需明确 **因果历史** 与 **train/test 边界**，避免泄漏。
+- **分层采样示例**（`data/processed/plausibility_messages_split_sampled_50k_2k_50k/sampling_meta.json`）：
+  - train：**50k** 行（自全量约 317 万行中按 **label** 分层采样）；
+  - val：**2k**（自 5000 行母集）；
+  - test：**50k**（自全量约 380 万行中分层采样）。
+- **评测代码入口**：`src/eval/eval_gridsybil_plausibility.py`、`src/eval/metric_integration_gridsybil_plausibility.py`（与 message-level JSONL 及训练配置配套使用）。
+
+### 截至 2026-04 的开放方向
+
+- **表示学习**：在结构化特征或 LLM **embedding** 上接 **LR / XGBoost** 等，形成与端到端 LoRA **可比的非生成式基线**。
+- **跨窗口 / 行为特征**：参考 F2MD 的 aggregation / behavioral 思想，在同一接收流上对 sender 维护 **跨 10s episode** 的慢特征（需注意划分与因果性）。
+- **规模化**：在 7B 收益已较大的前提下，若需再榨性能可 **单次** 尝试更大 Instruct 模型或改进 **校准 / 阈值**，并固定 **统一 benchmark 套件**（同一 split 与指标）。
