@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import random
 import time
 from dataclasses import dataclass
+from io import TextIOBase
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Set, Tuple
 
@@ -57,6 +59,8 @@ class EvalConfig:
     prompt_include_columns: List[str]
     feature_name_style: str
     progress_every_samples: int
+    log_row_path: str | None
+    log_gzip: bool
 
 
 def load_yaml_config(path: Path) -> Dict[str, Any]:
@@ -127,6 +131,20 @@ def parse_args() -> EvalConfig:
         default=50,
         help="Print progress every N evaluated samples (0 disables periodic progress).",
     )
+    p.add_argument(
+        "--log_row_path",
+        type=str,
+        default=None,
+        help=(
+            "Optional per-sample output path (.jsonl or .jsonl.gz). Supports "
+            "{run_id}/{model_tag}/{split}/{shard_index} placeholders."
+        ),
+    )
+    p.add_argument(
+        "--no_log_gzip",
+        action="store_true",
+        help="Disable gzip wrapper when --log_row_path does not end with .gz.",
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
@@ -187,6 +205,8 @@ def parse_args() -> EvalConfig:
         prompt_include_columns=prompt_include_columns,
         feature_name_style=feature_name_style,
         progress_every_samples=max(0, int(args.progress_every_samples)),
+        log_row_path=args.log_row_path,
+        log_gzip=not args.no_log_gzip,
     )
 
 
@@ -279,6 +299,29 @@ def aggregate_metrics(tp: int, fp: int, fn: int, tn: int) -> Dict[str, float]:
     }
 
 
+def _open_log_file(path: Path, use_gzip: bool) -> Tuple[Path, TextIOBase]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    should_gzip = (path.suffix == ".gz") or use_gzip
+    resolved = path
+    if should_gzip and path.suffix != ".gz":
+        resolved = path.with_suffix(path.suffix + ".gz")
+    if should_gzip:
+        fh = gzip.open(resolved, "wt", encoding="utf-8")
+    else:
+        fh = resolved.open("w", encoding="utf-8")
+    return resolved, fh
+
+
+def _error_type(gold: int, pred: int) -> str:
+    if gold == 1 and pred == 1:
+        return "tp"
+    if gold == 0 and pred == 1:
+        return "fp"
+    if gold == 1 and pred == 0:
+        return "fn"
+    return "tn"
+
+
 def run_eval(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -294,91 +337,139 @@ def run_eval(
     examples: List[Dict[str, Any]] = []
 
     print(f"Evaluating {model_tag} on {n} samples (split={cfg.split})...", flush=True)
+    row_log_fh: TextIOBase | None = None
+    row_log_path: Path | None = None
+    if cfg.log_row_path:
+        rendered = cfg.log_row_path.format(
+            run_id=cfg.run_id,
+            model_tag=model_tag,
+            split=cfg.split,
+            shard_index=cfg.shard_index,
+        )
+        row_log_path, row_log_fh = _open_log_file(Path(rendered), use_gzip=cfg.log_gzip)
+        print(f"Per-sample row log: {row_log_path}", flush=True)
     t0 = time.time()
 
-    for i, ex in enumerate(rows):
-        gold = int(ex.get("label", 0))
-        pb = build_plausibility_prompt(
-            sample=ex,
-            tokenizer=tokenizer,
-            simulate_budget_cutoff=cfg.simulate_budget_cutoff,
-            total_budget=cfg.max_seq_len,
-            reserve_answer_tokens=cfg.reserve_answer_tokens,
-            prompt_variant=cfg.prompt_variant,
-            feature_name_style=cfg.feature_name_style,
-            include_prefixes=cfg.prompt_include_prefixes,
-            include_columns=cfg.prompt_include_columns,
-            exclude_columns=cfg.prompt_exclude_columns,
-        )
-        enc = tokenizer(
-            pb.prompt_text,
-            return_tensors="pt",
-            add_special_tokens=False,
-            truncation=False,
-        )
-        prompt_len = enc["input_ids"].shape[1]
-        if prompt_len > cfg.max_seq_len:
-            prompt_too_long += 1
-            continue
-        enc = {k: v.to(device) for k, v in enc.items()}
-        if "attention_mask" not in enc:
-            enc["attention_mask"] = torch.ones_like(enc["input_ids"])
+    try:
+        for i, ex in enumerate(rows):
+            gold = int(ex.get("label", 0))
+            pb = build_plausibility_prompt(
+                sample=ex,
+                tokenizer=tokenizer,
+                simulate_budget_cutoff=cfg.simulate_budget_cutoff,
+                total_budget=cfg.max_seq_len,
+                reserve_answer_tokens=cfg.reserve_answer_tokens,
+                prompt_variant=cfg.prompt_variant,
+                feature_name_style=cfg.feature_name_style,
+                include_prefixes=cfg.prompt_include_prefixes,
+                include_columns=cfg.prompt_include_columns,
+                exclude_columns=cfg.prompt_exclude_columns,
+            )
+            enc = tokenizer(
+                pb.prompt_text,
+                return_tensors="pt",
+                add_special_tokens=False,
+                truncation=False,
+            )
+            prompt_len = enc["input_ids"].shape[1]
+            gen_text = ""
+            ok = False
+            pred: int | None = None
+            sample_error_type = "prompt_too_long"
+            if prompt_len > cfg.max_seq_len:
+                prompt_too_long += 1
+            else:
+                enc = {k: v.to(device) for k, v in enc.items()}
+                if "attention_mask" not in enc:
+                    enc["attention_mask"] = torch.ones_like(enc["input_ids"])
 
-        with torch.no_grad():
-            gen_ids = model.generate(
-                **enc,
-                max_new_tokens=cfg.max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-        input_len = enc["input_ids"].shape[1]
-        gen_text = tokenizer.decode(gen_ids[0][input_len:], skip_special_tokens=True)
-        pred, ok = parse_prediction_label(gen_text)
-        if ok:
-            parse_ok_n += 1
-        pred = 0 if pred is None else int(pred)
+                with torch.no_grad():
+                    gen_ids = model.generate(
+                        **enc,
+                        max_new_tokens=cfg.max_new_tokens,
+                        do_sample=False,
+                        pad_token_id=tokenizer.pad_token_id,
+                    )
+                input_len = enc["input_ids"].shape[1]
+                gen_text = tokenizer.decode(gen_ids[0][input_len:], skip_special_tokens=True)
+                pred, ok = parse_prediction_label(gen_text)
+                if ok:
+                    parse_ok_n += 1
+                pred = 0 if pred is None else int(pred)
+                sample_error_type = _error_type(gold, pred)
 
-        if gold == 1 and pred == 1:
-            tp += 1
-        elif gold == 0 and pred == 1:
-            fp += 1
-        elif gold == 1 and pred == 0:
-            fn += 1
-        else:
-            tn += 1
+                if sample_error_type == "tp":
+                    tp += 1
+                elif sample_error_type == "fp":
+                    fp += 1
+                elif sample_error_type == "fn":
+                    fn += 1
+                else:
+                    tn += 1
 
-        if i < cfg.print_predictions:
-            print(
-                f"[{i + 1}] gold={gold} pred={pred} parse_ok={ok} raw={gen_text!r}",
-                flush=True,
-            )
-        if gold != pred and len(examples) < cfg.show_examples:
-            examples.append(
-                {
-                    "idx": i,
-                    "gold": gold,
-                    "pred": pred,
-                    "parse_ok": ok,
-                    "raw_generation": gen_text,
-                    "episode_id": ex.get("episode_id"),
-                    "message_id": ex.get("message_id"),
-                    "sender_id": ex.get("sender_id"),
-                }
-            )
-        if (
-            (cfg.progress_every_samples > 0 and (i + 1) % cfg.progress_every_samples == 0)
-            or (i + 1) == n
-        ):
-            elapsed = time.time() - t0
-            rate = (i + 1) / elapsed if elapsed > 0 else 0.0
-            remaining = max(0, n - (i + 1))
-            eta_s = (remaining / rate) if rate > 0 else float("inf")
-            eta_text = f"{eta_s:.1f}s" if eta_s != float("inf") else "inf"
-            print(
-                f"  progress {i + 1}/{n} "
-                f"elapsed={elapsed:.1f}s rate={rate:.2f} samples/s eta={eta_text}",
-                flush=True,
-            )
+                if i < cfg.print_predictions:
+                    print(
+                        f"[{i + 1}] gold={gold} pred={pred} parse_ok={ok} raw={gen_text!r}",
+                        flush=True,
+                    )
+                if gold != pred and len(examples) < cfg.show_examples:
+                    examples.append(
+                        {
+                            "idx": i,
+                            "gold": gold,
+                            "pred": pred,
+                            "parse_ok": ok,
+                            "raw_generation": gen_text,
+                            "episode_id": ex.get("episode_id"),
+                            "message_id": ex.get("message_id"),
+                            "sender_id": ex.get("sender_id"),
+                        }
+                    )
+
+            if row_log_fh is not None:
+                row_record: Dict[str, Any] = dict(ex)
+                row_record.update(
+                    {
+                        "run_id": cfg.run_id,
+                        "model_tag": model_tag,
+                        "split": cfg.split,
+                        "num_shards": cfg.num_shards,
+                        "shard_index": cfg.shard_index,
+                        "row_index_in_shard": i,
+                        "gold_label": gold,
+                        "predicted_label": pred,
+                        "parse_ok": int(ok),
+                        "prompt_too_long": int(prompt_len > cfg.max_seq_len),
+                        "raw_generation": gen_text,
+                        "error_type": sample_error_type,
+                        "tp": int(sample_error_type == "tp"),
+                        "fp": int(sample_error_type == "fp"),
+                        "fn": int(sample_error_type == "fn"),
+                        "tn": int(sample_error_type == "tn"),
+                    }
+                )
+                row_log_fh.write(json.dumps(row_record, ensure_ascii=False) + "\n")
+                if (i + 1) % 200 == 0:
+                    row_log_fh.flush()
+
+            if (
+                (cfg.progress_every_samples > 0 and (i + 1) % cfg.progress_every_samples == 0)
+                or (i + 1) == n
+            ):
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed if elapsed > 0 else 0.0
+                remaining = max(0, n - (i + 1))
+                eta_s = (remaining / rate) if rate > 0 else float("inf")
+                eta_text = f"{eta_s:.1f}s" if eta_s != float("inf") else "inf"
+                print(
+                    f"  progress {i + 1}/{n} "
+                    f"elapsed={elapsed:.1f}s rate={rate:.2f} samples/s eta={eta_text}",
+                    flush=True,
+                )
+    finally:
+        if row_log_fh is not None:
+            row_log_fh.flush()
+            row_log_fh.close()
 
     metrics = aggregate_metrics(tp, fp, fn, tn)
     elapsed = time.time() - t0
@@ -462,6 +553,8 @@ def main() -> None:
                 "prompt_include_prefixes": list(cfg.prompt_include_prefixes),
                 "prompt_include_columns": sorted(cfg.prompt_include_columns),
                 "feature_name_style": cfg.feature_name_style,
+                "log_row_path": cfg.log_row_path,
+                "log_gzip": cfg.log_gzip,
             },
             indent=2,
             ensure_ascii=False,

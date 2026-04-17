@@ -1,3 +1,49 @@
+"""
+Sample fixed-size train/val/test parquet subsets for GridSybil plausibility.
+
+Typical usage (Windows CMD)
+---------------------------
+
+REM 1) 50k / 2k / 50k (current default experiment scale)
+python -m src.data.sample_plausibility_parquet_splits ^
+  --in_dir data\\processed\\plausibility_messages_split ^
+  --out_dir data\\processed\\plausibility_messages_split_sampled_50k_2k_50k ^
+  --train_rows 50000 ^
+  --val_rows 2000 ^
+  --test_rows 50000 ^
+  --seed 42 ^
+  --stratify_label ^
+  --label_col label
+
+REM 2) 100k / 2k / 100k (scale-up experiment)
+python -m src.data.sample_plausibility_parquet_splits ^
+  --in_dir data\\processed\\plausibility_messages_split ^
+  --out_dir data\\processed\\plausibility_messages_split_sampled_100k_5k_100k ^
+  --train_rows 100000 ^
+  --val_rows 2000 ^
+  --test_rows 100000 ^
+  --seed 42 ^
+  --stratify_label ^
+  --label_col label
+
+REM 3) No stratification (pure random sampling)
+python -m src.data.sample_plausibility_parquet_splits ^
+  --in_dir data\\processed\\plausibility_messages_split ^
+  --out_dir data\\processed\\plausibility_messages_split_sampled_random_50k_2k_50k ^
+  --train_rows 50000 ^
+  --val_rows 2000 ^
+  --test_rows 50000 ^
+  --seed 42
+
+Outputs
+-------
+The output directory will contain:
+- train.parquet
+- val.parquet
+- test.parquet
+- sampling_meta.json
+"""
+
 from __future__ import annotations
 
 import argparse
