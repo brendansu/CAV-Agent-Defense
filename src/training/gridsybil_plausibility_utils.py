@@ -11,12 +11,14 @@ import numpy as np
 PROMPT_VARIANTS: Tuple[str, ...] = (
     "default",
     "traffic_neutral",
+    "traffic_neutral_recentk",
     "traffic_benign_prior",
     "traffic_compact",
 )
 
 DEFAULT_FEATURE_INCLUDE_PREFIXES: Tuple[str, ...] = (
     "msg_catch_",
+    "ctx_recentk_",
     "ctx_",
     "msg_valid_history_features",
     "msg_has_prev_same_pseudo",
@@ -84,16 +86,34 @@ FEATURE_ALIASES: Dict[str, str] = {
     "ctx_n_head_diff_lt_5deg": "context neighbors with heading diff < 5 deg",
     "ctx_n_triplet_similar": "context similar-triplet count",
     "ctx_triplet_ratio": "context similar-triplet ratio",
-    "ctx_sender_recent_k_count": "sender recent-K history count",
-    "ctx_sender_recent_k_unique_pseudo": "sender recent-K unique pseudonym count",
-    "ctx_sender_recent_k_time_since_last_msg": "sender recent-K time since last message (s)",
-    "ctx_sender_recent_k_mean_dt": "sender recent-K mean inter-message delta (s)",
-    "ctx_sender_recent_k_switch_rate": "sender recent-K pseudonym switch rate",
-    "ctx_sender_recent_k_speed_mean": "sender recent-K mean speed",
-    "ctx_sender_recent_k_speed_std": "sender recent-K speed standard deviation",
-    "ctx_sender_recent_k_heading_mean_diff_deg": "sender recent-K mean heading diff (deg)",
-    "ctx_sender_recent_k_pos_dispersion": "sender recent-K position dispersion",
-    "ctx_sender_recent_k_span_sec": "sender recent-K temporal span (s)",
+    # Recent-K v1 (sender prior messages, time-capped and count-capped)
+    "ctx_recentk_hist_count": "sender recent-window message count",
+    "ctx_recentk_hist_span_sec": "sender recent-window time span (s)",
+    "ctx_recentk_last_msg_catch_mgtsv": "recent-window last MGTSV score",
+    "ctx_recentk_mean_msg_catch_mgtsv": "recent-window mean MGTSV score",
+    "ctx_recentk_min_msg_catch_mgtsv": "recent-window min MGTSV score",
+    "ctx_recentk_count_msg_catch_mgtsv_le_0p8": "recent-window count MGTSV ≤ 0.8",
+    "ctx_recentk_count_msg_catch_mgtsv_le_0p95": "recent-window count MGTSV ≤ 0.95",
+    "ctx_recentk_last_msg_catch_int_min_neighbor": "recent-window last overlap min-neighbor ratio",
+    "ctx_recentk_mean_msg_catch_int_min_neighbor": "recent-window mean overlap min-neighbor ratio",
+    "ctx_recentk_min_msg_catch_int_min_neighbor": "recent-window min overlap min-neighbor ratio",
+    "ctx_recentk_count_msg_catch_int_min_neighbor_le_0p8": "recent-window count overlap min-neighbor ≤ 0.8",
+    "ctx_recentk_last_ctx_triplet_ratio": "recent-window last similar-triplet ratio",
+    "ctx_recentk_mean_ctx_triplet_ratio": "recent-window mean similar-triplet ratio",
+    "ctx_recentk_count_ctx_triplet_ratio_gt_0": "recent-window count triplet ratio > 0",
+    "ctx_recentk_frac_ctx_triplet_ratio_gt_0": "recent-window fraction triplet ratio > 0",
+    "ctx_recentk_last_ctx_speed_diff_mean": "recent-window last mean neighbor speed diff",
+    "ctx_recentk_mean_ctx_speed_diff_mean": "recent-window mean of mean neighbor speed diff",
+    "ctx_recentk_min_ctx_speed_diff_mean": "recent-window min mean neighbor speed diff",
+    "ctx_recentk_count_ctx_speed_diff_mean_lt_5": "recent-window count mean speed diff < 5",
+    "ctx_recentk_count_ctx_speed_diff_mean_lt_0p2": "recent-window count mean speed diff < 0.2",
+    "ctx_recentk_frac_ctx_speed_diff_mean_lt_5": "recent-window fraction mean speed diff < 5",
+    "ctx_recentk_last_ctx_head_diff_mean_deg": "recent-window last mean heading diff (deg)",
+    "ctx_recentk_mean_ctx_head_diff_mean_deg": "recent-window mean mean heading diff (deg)",
+    "ctx_recentk_min_ctx_head_diff_mean_deg": "recent-window min mean heading diff (deg)",
+    "ctx_recentk_count_ctx_head_diff_mean_deg_lt_1": "recent-window count mean heading diff < 1 deg",
+    "ctx_recentk_count_ctx_head_diff_mean_deg_lt_5": "recent-window count mean heading diff < 5 deg",
+    "ctx_recentk_frac_ctx_head_diff_mean_deg_lt_5": "recent-window fraction mean heading diff < 5 deg",
 }
 
 
@@ -115,6 +135,34 @@ _TRAFFIC_GROUP_HINTS: Dict[str, str] = {
     "Neighbor context": (
         "Traffic sybil behavior may appear as multiple nearby senders with unusually similar "
         "motion, heading, or local clustering patterns."
+    ),
+    # Recent-K sub-groups (ctx_recentk_*); finer hints than a single umbrella block.
+    "Sender recent: window": (
+        "How much sender-only history is available inside the recent window: message count and "
+        "time span (window is time-capped and count-capped)."
+    ),
+    "Sender recent: MGTSV": (
+        "Movement-gradient speed variation (MGTSV) over the sender's prior messages in the window; "
+        "threshold counts summarize how often scores were very low."
+    ),
+    "Sender recent: overlap": (
+        "Neighbor overlap plausibility (min-neighbor ratio) over recent sender messages; "
+        "tracks last/mean/min and how often the ratio fell below a tight cutoff."
+    ),
+    "Sender recent: triplets": (
+        "Similar-motion triplet ratio over recent sender messages; "
+        "nonzero ratios versus all-zero regimes, plus counts and fractions above zero."
+    ),
+    "Sender recent: neighbor speed": (
+        "Mean neighbor speed difference over recent sender messages; "
+        "small diffs (many neighbors matching speed) can be a traffic-sybil signal when combined with other cues."
+    ),
+    "Sender recent: neighbor heading": (
+        "Mean neighbor heading difference over recent sender messages; "
+        "counts of very small angular diffs summarize repeated tight alignment with neighbors."
+    ),
+    "Sender recent history": (
+        "Other recent-window summaries over the sender's prior messages (time-capped and count-capped)."
     ),
 }
 
@@ -147,6 +195,27 @@ PROMPT_VARIANT_SPECS: Dict[str, PromptVariantSpec] = {
             "",
             "Decision rule:",
             "- Use the overall pattern across plausibility checks, short-history consistency, and neighbor-context consistency.",
+            "- Traffic sybil attacks often appear as groups of nearby identities with overly similar motion or implausible local behavior.",
+            "- Do not rely on a single weak anomaly in isolation.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints=_TRAFFIC_GROUP_HINTS,
+    ),
+    "traffic_neutral_recentk": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled in a traffic sybil scenario.",
+            "",
+            "Decision rule:",
+            "- Use the overall pattern across plausibility checks, short-history consistency, neighbor-context consistency, and sender recent-history summaries.",
+            "- Sender recent-history lines aggregate key signals over the sender's prior messages in a short time window (time-capped and count-capped).",
             "- Traffic sybil attacks often appear as groups of nearby identities with overly similar motion or implausible local behavior.",
             "- Do not rely on a single weak anomaly in isolation.",
             "",
@@ -290,6 +359,24 @@ def parse_prediction_label(text: str) -> Tuple[int | None, bool]:
     return int(m.group(0)), True
 
 
+def _recentk_subgroup_title(key: str) -> str:
+    """Subgroup heading for ctx_recentk_* (order: specific patterns before fallback)."""
+    rest = key[len("ctx_recentk_") :] if key.startswith("ctx_recentk_") else key
+    if rest.startswith("hist_"):
+        return "Sender recent: window"
+    if "mgtsv" in rest:
+        return "Sender recent: MGTSV"
+    if "int_min_neighbor" in rest:
+        return "Sender recent: overlap"
+    if "triplet_ratio" in rest:
+        return "Sender recent: triplets"
+    if "speed_diff_mean" in rest:
+        return "Sender recent: neighbor speed"
+    if "head_diff_mean_deg" in rest:
+        return "Sender recent: neighbor heading"
+    return "Sender recent history"
+
+
 def _render_feature_name(key: str, style: str) -> str:
     s = str(style).strip().lower()
     if s == "raw":
@@ -304,6 +391,8 @@ def _render_feature_name(key: str, style: str) -> str:
 def _feature_group_title(key: str) -> str:
     if key.startswith("msg_catch_"):
         return "Plausibility checks"
+    if key.startswith("ctx_recentk_"):
+        return _recentk_subgroup_title(key)
     if key.startswith("ctx_"):
         return "Neighbor context"
     return "History and timing"

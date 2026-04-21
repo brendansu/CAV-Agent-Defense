@@ -48,17 +48,6 @@ prompt_include_columns:
   - ctx_n_head_diff_lt_5deg
   - ctx_n_triplet_similar
   - ctx_triplet_ratio
-  # Sender-temporal-v1
-  - ctx_sender_recent_k_count
-  - ctx_sender_recent_k_unique_pseudo
-  - ctx_sender_recent_k_time_since_last_msg
-  - ctx_sender_recent_k_mean_dt
-  - ctx_sender_recent_k_switch_rate
-  - ctx_sender_recent_k_speed_mean
-  - ctx_sender_recent_k_speed_std
-  - ctx_sender_recent_k_heading_mean_diff_deg
-  - ctx_sender_recent_k_pos_dispersion
-  - ctx_sender_recent_k_span_sec
 
 # Optional subsampling to avoid full in-memory tokenization on very large parquet splits.
 # 0 means use all rows.
