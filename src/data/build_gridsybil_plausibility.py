@@ -62,6 +62,8 @@ class BuildConfig:
     sim_dist_thresh_m: float
     sim_speed_thresh_mps: float
     sim_heading_thresh_deg: float
+    sender_recent_k: int
+    sender_recent_window_sec: float
     workers: int
 
 
@@ -115,6 +117,48 @@ def _safe_p10(xs: List[float]) -> float:
     s = sorted(xs)
     idx = int(round(0.1 * (len(s) - 1)))
     return float(s[idx])
+
+
+def _safe_pos_dispersion(positions: List[Tuple[float, float]]) -> float:
+    if not positions:
+        return math.nan
+    cx = sum(p[0] for p in positions) / len(positions)
+    cy = sum(p[1] for p in positions) / len(positions)
+    dists = [_dist(p, (cx, cy)) for p in positions]
+    return _safe_mean(dists)
+
+
+def _finite_values(xs: List[Any]) -> List[float]:
+    out: List[float] = []
+    for x in xs:
+        try:
+            v = float(x)
+        except Exception:
+            continue
+        if math.isnan(v) or math.isinf(v):
+            continue
+        out.append(v)
+    return out
+
+
+def _safe_last(xs: List[float]) -> float:
+    return float(xs[-1]) if xs else math.nan
+
+
+def _count_le(xs: List[float], threshold: float) -> int:
+    return int(sum(1 for x in xs if x <= threshold))
+
+
+def _count_lt(xs: List[float], threshold: float) -> int:
+    return int(sum(1 for x in xs if x < threshold))
+
+
+def _count_gt(xs: List[float], threshold: float) -> int:
+    return int(sum(1 for x in xs if x > threshold))
+
+
+def _safe_ratio(num: int, den: int) -> float:
+    return float(num / den) if den > 0 else math.nan
 
 
 def _parse_trace_filename(path: Path) -> Dict[str, int]:
@@ -417,6 +461,7 @@ def _process_trace_file(
     last_by_pseudo: Dict[int, Dict[str, Any]] = {}
     latest_by_pseudo: Dict[int, Dict[str, Any]] = {}
     recent_msgs: Deque[Dict[str, Any]] = deque()
+    recent_by_sender: Dict[int, Deque[Dict[str, Any]]] = defaultdict(deque)
 
     fresh_sec = max(cfg.context_window_sec, params["MAX_DELTA_INTER"])
 
@@ -654,6 +699,49 @@ def _process_trace_file(
                     switch_count += 1
                 prev_p = m["pseudo"]
 
+        # --- Sender recent-K summaries (v1) ---
+        sender_hist = recent_by_sender.get(sender, deque())
+        sender_window_sec = max(0.0, float(cfg.sender_recent_window_sec))
+        sender_k = max(0, int(cfg.sender_recent_k))
+        if sender_window_sec > 0:
+            while sender_hist and sender_hist[0]["t"] < t - sender_window_sec:
+                sender_hist.popleft()
+        if sender_k > 0:
+            while len(sender_hist) > sender_k:
+                sender_hist.popleft()
+        sender_hist_list = list(sender_hist)
+        sender_hist_n = int(len(sender_hist_list))
+        sender_hist_span_sec = float(t - sender_hist_list[0]["t"]) if sender_hist_list else math.nan
+
+        hist_mgtsv = _finite_values([m.get("msg_catch_mgtsv", math.nan) for m in sender_hist_list])
+        hist_intmin = _finite_values(
+            [m.get("msg_catch_int_min_neighbor", math.nan) for m in sender_hist_list]
+        )
+        hist_triplet = _finite_values(
+            [m.get("ctx_triplet_ratio", math.nan) for m in sender_hist_list]
+        )
+        hist_speed_diff = _finite_values(
+            [m.get("ctx_speed_diff_mean", math.nan) for m in sender_hist_list]
+        )
+        hist_head_diff = _finite_values(
+            [m.get("ctx_head_diff_mean_deg", math.nan) for m in sender_hist_list]
+        )
+
+        mgtsv_n_le_0p8 = _count_le(hist_mgtsv, 0.8)
+        mgtsv_n_le_0p95 = _count_le(hist_mgtsv, 0.95)
+        intmin_n_le_0p8 = _count_le(hist_intmin, 0.8)
+        triplet_n_gt_0 = _count_gt(hist_triplet, 0.0)
+        speed_diff_n_lt_5 = _count_lt(hist_speed_diff, 5.0)
+        speed_diff_n_lt_0p2 = _count_lt(hist_speed_diff, 0.2)
+        head_diff_n_lt_1 = _count_lt(hist_head_diff, 1.0)
+        head_diff_n_lt_5 = _count_lt(hist_head_diff, 5.0)
+
+        ctx_triplet_ratio_val = (
+            float(n_triplet / len(neighbor_window)) if neighbor_window else math.nan
+        )
+        ctx_speed_diff_mean_val = _safe_mean(speed_diffs)
+        ctx_head_diff_mean_deg_val = _safe_mean(head_diffs)
+
         # --- Row ---
         sender_attack_flag = vehicle_attack_map.get(sender, math.nan)
         receiver_attack_flag = vehicle_attack_map.get(receiver_id, file_meta["attack_flag"])
@@ -718,20 +806,52 @@ def _process_trace_file(
             "ctx_n_close_10m": int(sum(1 for d in dists if d <= 10.0)),
             "ctx_n_close_20m": int(sum(1 for d in dists if d <= 20.0)),
             "ctx_speed_diff_min": _safe_min(speed_diffs),
-            "ctx_speed_diff_mean": _safe_mean(speed_diffs),
+            "ctx_speed_diff_mean": ctx_speed_diff_mean_val,
             "ctx_n_speed_diff_lt_0p5": int(sum(1 for dv in speed_diffs if dv <= 0.5)),
             "ctx_n_speed_diff_lt_1p0": int(sum(1 for dv in speed_diffs if dv <= 1.0)),
             "ctx_head_diff_min_deg": _safe_min(head_diffs),
-            "ctx_head_diff_mean_deg": _safe_mean(head_diffs),
+            "ctx_head_diff_mean_deg": ctx_head_diff_mean_deg_val,
             "ctx_n_head_diff_lt_5deg": int(sum(1 for dh in head_diffs if dh <= 5.0)),
             "ctx_n_head_diff_lt_10deg": int(sum(1 for dh in head_diffs if dh <= 10.0)),
             "ctx_n_triplet_similar": n_triplet,
-            "ctx_triplet_ratio": (
-                float(n_triplet / len(neighbor_window)) if neighbor_window else math.nan
-            ),
+            "ctx_triplet_ratio": ctx_triplet_ratio_val,
             "ctx_n_pseudo_per_sender_dt": len(same_sender_pseudos),
             "ctx_is_sender_multi_pseudo_now": int(len(same_sender_pseudos) > 1),
             "ctx_sender_pseudo_switch_count_w": switch_count,
+            # recent-K v1 (5s window + K cap; sender history only)
+            "ctx_recentk_hist_count": sender_hist_n,
+            "ctx_recentk_hist_span_sec": sender_hist_span_sec,
+            "ctx_recentk_last_msg_catch_mgtsv": _safe_last(hist_mgtsv),
+            "ctx_recentk_mean_msg_catch_mgtsv": _safe_mean(hist_mgtsv),
+            "ctx_recentk_min_msg_catch_mgtsv": _safe_min(hist_mgtsv),
+            "ctx_recentk_count_msg_catch_mgtsv_le_0p8": mgtsv_n_le_0p8,
+            "ctx_recentk_count_msg_catch_mgtsv_le_0p95": mgtsv_n_le_0p95,
+            "ctx_recentk_last_msg_catch_int_min_neighbor": _safe_last(hist_intmin),
+            "ctx_recentk_mean_msg_catch_int_min_neighbor": _safe_mean(hist_intmin),
+            "ctx_recentk_min_msg_catch_int_min_neighbor": _safe_min(hist_intmin),
+            "ctx_recentk_count_msg_catch_int_min_neighbor_le_0p8": intmin_n_le_0p8,
+            "ctx_recentk_last_ctx_triplet_ratio": _safe_last(hist_triplet),
+            "ctx_recentk_mean_ctx_triplet_ratio": _safe_mean(hist_triplet),
+            "ctx_recentk_count_ctx_triplet_ratio_gt_0": triplet_n_gt_0,
+            "ctx_recentk_frac_ctx_triplet_ratio_gt_0": _safe_ratio(
+                triplet_n_gt_0, len(hist_triplet)
+            ),
+            "ctx_recentk_last_ctx_speed_diff_mean": _safe_last(hist_speed_diff),
+            "ctx_recentk_mean_ctx_speed_diff_mean": _safe_mean(hist_speed_diff),
+            "ctx_recentk_min_ctx_speed_diff_mean": _safe_min(hist_speed_diff),
+            "ctx_recentk_count_ctx_speed_diff_mean_lt_5": speed_diff_n_lt_5,
+            "ctx_recentk_count_ctx_speed_diff_mean_lt_0p2": speed_diff_n_lt_0p2,
+            "ctx_recentk_frac_ctx_speed_diff_mean_lt_5": _safe_ratio(
+                speed_diff_n_lt_5, len(hist_speed_diff)
+            ),
+            "ctx_recentk_last_ctx_head_diff_mean_deg": _safe_last(hist_head_diff),
+            "ctx_recentk_mean_ctx_head_diff_mean_deg": _safe_mean(hist_head_diff),
+            "ctx_recentk_min_ctx_head_diff_mean_deg": _safe_min(hist_head_diff),
+            "ctx_recentk_count_ctx_head_diff_mean_deg_lt_1": head_diff_n_lt_1,
+            "ctx_recentk_count_ctx_head_diff_mean_deg_lt_5": head_diff_n_lt_5,
+            "ctx_recentk_frac_ctx_head_diff_mean_deg_lt_5": _safe_ratio(
+                head_diff_n_lt_5, len(hist_head_diff)
+            ),
             "avail_prev_same_pseudo": has_prev,
             "avail_neighbor_context": int(len(neighbor_window) > 0),
             "avail_map": 0,
@@ -751,10 +871,23 @@ def _process_trace_file(
             "speed": cur_speed,
             "speed_conf": cur_spd_conf,
             "heading_deg": cur_heading_deg,
+            "msg_catch_mgtsv": mgtsv,
+            "msg_catch_int_min_neighbor": int_min_neighbor,
+            "ctx_triplet_ratio": ctx_triplet_ratio_val,
+            "ctx_speed_diff_mean": ctx_speed_diff_mean_val,
+            "ctx_head_diff_mean_deg": ctx_head_diff_mean_deg_val,
         }
         last_by_pseudo[pseudo] = snap
         latest_by_pseudo[pseudo] = snap
         recent_msgs.append(snap)
+        sender_queue = recent_by_sender.setdefault(sender, deque())
+        sender_queue.append(snap)
+        if sender_window_sec > 0:
+            while sender_queue and sender_queue[0]["t"] < t - sender_window_sec:
+                sender_queue.popleft()
+        if sender_k > 0:
+            while len(sender_queue) > sender_k:
+                sender_queue.popleft()
 
     return rows
 
@@ -845,6 +978,18 @@ def parse_args() -> BuildConfig:
     ap.add_argument("--sim-dist-thresh-m", type=float, default=10.0)
     ap.add_argument("--sim-speed-thresh-mps", type=float, default=0.5)
     ap.add_argument("--sim-heading-thresh-deg", type=float, default=10.0)
+    ap.add_argument(
+        "--sender-recent-k",
+        type=int,
+        default=8,
+        help="Sender history length (messages) used for ctx_recentk_* summaries.",
+    )
+    ap.add_argument(
+        "--sender-recent-window-sec",
+        type=float,
+        default=5.0,
+        help="Sender history time window (seconds) for ctx_recentk_* summaries.",
+    )
     ap.add_argument("--workers", type=int, default=1)
     args = ap.parse_args()
     return BuildConfig(
@@ -861,6 +1006,8 @@ def parse_args() -> BuildConfig:
         sim_dist_thresh_m=args.sim_dist_thresh_m,
         sim_speed_thresh_mps=args.sim_speed_thresh_mps,
         sim_heading_thresh_deg=args.sim_heading_thresh_deg,
+        sender_recent_k=max(0, int(args.sender_recent_k)),
+        sender_recent_window_sec=max(0.0, float(args.sender_recent_window_sec)),
         workers=max(1, int(args.workers)),
     )
 

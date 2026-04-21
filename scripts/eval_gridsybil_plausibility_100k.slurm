@@ -25,7 +25,7 @@ SHARD_INDEX=${SLURM_ARRAY_TASK_ID}
 MAX_SAMPLES="${MAX_SAMPLES:-0}"
 # empty means use reserve_answer_tokens from YAML
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-}"
-LOG_ROW_PATH="${LOG_ROW_PATH:-/scratch/$USER/veremi_collusion/outputs/eval_logs/plausibility_100k/shard{shard_index}.jsonl}"
+LOG_ROW_PATH="${LOG_ROW_PATH:-/scratch/$USER/veremi_collusion/outputs/eval_logs/plausibility_100k/run_{run_id}_model_{model_tag}_split_{split}_shard{shard_index}.jsonl.gz}"
 PROGRESS_EVERY_SAMPLES="${PROGRESS_EVERY_SAMPLES:-500}"
 
 module load cuda/12.3.0
@@ -82,3 +82,21 @@ else
     --log_row_path "$LOG_ROW_PATH" \
     --progress_every_samples "$PROGRESS_EVERY_SAMPLES"
 fi
+
+# ---- Post-run aggregation templates (manual) ----
+# python -m src.eval.metric_integration_gridsybil_plausibility \
+#   --run_id "$RUN_ID" \
+#   --model_tag lora \
+#   --split "$SPLIT" \
+#   --slurm_pattern "/scratch/$USER/veremi_collusion/slurm/eval_plausibility_lora_100k/log_*.out" \
+#   --output_dir "/scratch/$USER/veremi_collusion/outputs/eval_integration_plausibility"
+#
+# python -m src.eval.aggregate_gridsybil_plausibility_rows \
+#   --input_glob "/scratch/$USER/veremi_collusion/outputs/eval_logs/plausibility_100k/run_${RUN_ID}_model_lora_split_${SPLIT}_shard*.jsonl.gz" \
+#   --run_id "$RUN_ID" \
+#   --model_tag lora \
+#   --split "$SPLIT" \
+#   --overall_out_json "/scratch/$USER/veremi_collusion/outputs/eval_integration_plausibility/overall_rows_${RUN_ID}_lora_${SPLIT}.json" \
+#   --bucket_out_csv "/scratch/$USER/veremi_collusion/outputs/eval_integration_plausibility/buckets_${RUN_ID}_lora_${SPLIT}.csv" \
+#   --merged_out_parquet "/scratch/$USER/veremi_collusion/outputs/eval_integration_plausibility/rows_${RUN_ID}_lora_${SPLIT}.parquet" \
+#   --metrics_json_glob "/scratch/$USER/veremi_collusion/slurm/eval_plausibility_lora_100k/log_*.out"

@@ -84,6 +84,16 @@ FEATURE_ALIASES: Dict[str, str] = {
     "ctx_n_head_diff_lt_5deg": "context neighbors with heading diff < 5 deg",
     "ctx_n_triplet_similar": "context similar-triplet count",
     "ctx_triplet_ratio": "context similar-triplet ratio",
+    "ctx_sender_recent_k_count": "sender recent-K history count",
+    "ctx_sender_recent_k_unique_pseudo": "sender recent-K unique pseudonym count",
+    "ctx_sender_recent_k_time_since_last_msg": "sender recent-K time since last message (s)",
+    "ctx_sender_recent_k_mean_dt": "sender recent-K mean inter-message delta (s)",
+    "ctx_sender_recent_k_switch_rate": "sender recent-K pseudonym switch rate",
+    "ctx_sender_recent_k_speed_mean": "sender recent-K mean speed",
+    "ctx_sender_recent_k_speed_std": "sender recent-K speed standard deviation",
+    "ctx_sender_recent_k_heading_mean_diff_deg": "sender recent-K mean heading diff (deg)",
+    "ctx_sender_recent_k_pos_dispersion": "sender recent-K position dispersion",
+    "ctx_sender_recent_k_span_sec": "sender recent-K temporal span (s)",
 }
 
 
