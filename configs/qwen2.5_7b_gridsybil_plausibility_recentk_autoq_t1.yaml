@@ -1,0 +1,112 @@
+model_name: Qwen/Qwen2.5-7B-Instruct
+parquet_dir: /scratch/YOUR_USERNAME/veremi_collusion/data/gridsybil_plausibility_senderk_50k
+output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/qwen2.5-7b-gridsybil-plausibility-recentk-autoq-t1
+
+max_seq_len: 2560
+reserve_answer_tokens: 16
+simulate_budget_cutoff: true
+add_eos_token: true
+prompt_variant: traffic_neutral_recentk
+feature_name_style: descriptive
+
+prompt_exclude_columns:
+  - label
+  - schema_version
+  - source_file
+  - source_line_idx
+  - sender_id
+  - sender_pseudo
+  - sender_attack_flag
+  - receiver_attack_flag
+
+prompt_include_prefixes: []
+prompt_include_columns:
+  - msg_has_prev_same_pseudo
+  - msg_dt_prev_same_pseudo
+  - msg_valid_history_features
+  - msg_catch_art
+  - msg_catch_freq
+  - msg_catch_int_min_neighbor
+  - msg_catch_int_n_violations
+  - msg_catch_mgtd
+  - msg_catch_mgts
+  - msg_catch_mgtsv
+  - msg_catch_mgtsvm
+  - msg_catch_phc
+  - ctx_n_neighbors
+  - ctx_dist_min
+  - ctx_dist_mean
+  - ctx_n_close_5m
+  - ctx_n_close_10m
+  - ctx_speed_diff_mean
+  - ctx_head_diff_mean_deg
+  - ctx_n_speed_diff_lt_0p5
+  - ctx_n_head_diff_lt_5deg
+  - ctx_n_triplet_similar
+  - ctx_triplet_ratio
+  # Sender-temporal recent-k stats
+  - ctx_recentk_hist_count
+  - ctx_recentk_hist_span_sec
+  - ctx_recentk_last_msg_catch_mgtsv
+  - ctx_recentk_mean_msg_catch_mgtsv
+  - ctx_recentk_min_msg_catch_mgtsv
+  - ctx_recentk_last_msg_catch_int_min_neighbor
+  - ctx_recentk_mean_msg_catch_int_min_neighbor
+  - ctx_recentk_min_msg_catch_int_min_neighbor
+  - ctx_recentk_last_ctx_triplet_ratio
+  - ctx_recentk_mean_ctx_triplet_ratio
+  - ctx_recentk_last_ctx_speed_diff_mean
+  - ctx_recentk_mean_ctx_speed_diff_mean
+  - ctx_recentk_min_ctx_speed_diff_mean
+  - ctx_recentk_last_ctx_head_diff_mean_deg
+  - ctx_recentk_mean_ctx_head_diff_mean_deg
+  - ctx_recentk_min_ctx_head_diff_mean_deg
+  # AutoQ T1 threshold summaries (no T2 for now)
+  - ctx_recentk_count_msg_catch_mgtsv_t1
+  - ctx_recentk_frac_msg_catch_mgtsv_t1
+  - ctx_recentk_count_msg_catch_int_min_neighbor_t1
+  - ctx_recentk_frac_msg_catch_int_min_neighbor_t1
+  - ctx_recentk_count_ctx_triplet_ratio_t1
+  - ctx_recentk_frac_ctx_triplet_ratio_t1
+  - ctx_recentk_count_ctx_speed_diff_mean_t1
+  - ctx_recentk_frac_ctx_speed_diff_mean_t1
+  - ctx_recentk_count_ctx_head_diff_mean_deg_t1
+  - ctx_recentk_frac_ctx_head_diff_mean_deg_t1
+  # Structural threshold for triplet
+  - ctx_recentk_count_ctx_triplet_ratio_gt_0
+  - ctx_recentk_frac_ctx_triplet_ratio_gt_0
+
+max_train_rows: 50000
+max_val_rows: 5000
+max_test_rows: 5000
+subsample_seed: 42
+
+attack_sample_weight: 1.0
+benign_sample_weight: 1.0
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+num_train_epochs: 1.0
+max_steps: -1
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+
+logging_steps: 50
+eval_strategy: steps
+eval_steps: 200
+save_strategy: steps
+save_steps: 100
+save_total_limit: 2
+max_eval_samples: 1000
+report_to: []

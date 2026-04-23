@@ -51,6 +51,27 @@ class ListBackedDataset(Dataset):
         return ListBackedDataset([self.rows[i] for i in indices])
 
 
+def _warn_missing_prompt_columns(raw_splits: Dict[str, Dataset], include_columns: List[str]) -> None:
+    if not include_columns:
+        return
+    present: Set[str] = set()
+    for ds in raw_splits.values():
+        if len(ds) == 0:
+            continue
+        first = ds[0]
+        if isinstance(first, dict):
+            present.update(first.keys())
+    missing = [c for c in include_columns if c not in present]
+    if missing:
+        preview = ", ".join(missing[:20])
+        more = " ..." if len(missing) > 20 else ""
+        print(
+            "[dataset] warning: some prompt_include_columns are missing from loaded splits: "
+            f"{preview}{more}",
+            flush=True,
+        )
+
+
 def _jsonable_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for k, v in row.items():
@@ -224,6 +245,7 @@ def load_gridsybil_plausibility_datasets(
         subsample_seed=subsample_seed,
     )
     raw_splits = load_raw_gridsybil_plausibility_splits(config)
+    _warn_missing_prompt_columns(raw_splits, list(config.prompt_include_columns or []))
 
     tokenized: dict[str, Dataset] = {}
     for split_name, raw_ds in raw_splits.items():

@@ -471,3 +471,10 @@
 - **表示学习**：在结构化特征或 LLM **embedding** 上接 **LR / XGBoost** 等，形成与端到端 LoRA **可比的非生成式基线**。
 - **跨窗口 / 行为特征**：参考 F2MD 的 aggregation / behavioral 思想，在同一接收流上对 sender 维护 **跨 10s episode** 的慢特征（需注意划分与因果性）。
 - **规模化**：在 7B 收益已较大的前提下，若需再榨性能可 **单次** 尝试更大 Instruct 模型或改进 **校准 / 阈值**，并固定 **统一 benchmark 套件**（同一 split 与指标）。
+
+### Recent-K plausibility update（2026-04-21）
+
+- 在 GridSybil **message-level plausibility** 主线上，引入了 **sender recent-K / recent-window summary** 特征（`ctx_recentk_*`），并完成了数据构建、prompt、训练配置与评测脚本的对齐；详细记录见 `doc/gridsybil_plausibility_recentk_progress_2026-04.md`。
+- 当前 recent-K LoRA 结果非常强：在 50k test、8-shard 聚合下，**400-step checkpoint** 已达到 **accuracy ≈ 0.9868、precision ≈ 0.9930、recall ≈ 0.9856、F1 ≈ 0.9893**；后续 **1 epoch** checkpoint 也保持了四项主指标都在 **0.98+** 的水平。
+- 需要注意的是，recent-K 特征设计过程部分受到了旧 held-out test 分布观察的启发，因此当前 test 指标应视为 **exploratory / provisional**，而非最终无偏 benchmark 结论。
+- 下一步计划是建立新的**时间隔离 `train/dev/test` protocol**（例如前 50 分钟 / 中间 20 分钟 / 后 50 分钟），冻结当前 feature list 先做一轮重新验证，再进一步将 threshold / feature-template 设计规范化、自动化，并据此决定是否扩展到更多攻击类型。

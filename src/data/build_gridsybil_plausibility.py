@@ -64,6 +64,13 @@ class BuildConfig:
     sim_heading_thresh_deg: float
     sender_recent_k: int
     sender_recent_window_sec: float
+    recentk_threshold_train_windows: List[Tuple[float, float]]
+    recentk_low_quantiles: List[float]
+    recentk_high_quantiles: List[float]
+    recentk_t1_min_support: float
+    recentk_t1_min_gap: float
+    recentk_t2_min_support: float
+    recentk_t2_min_gap: float
     workers: int
 
 
@@ -159,6 +166,85 @@ def _count_gt(xs: List[float], threshold: float) -> int:
 
 def _safe_ratio(num: int, den: int) -> float:
     return float(num / den) if den > 0 else math.nan
+
+
+def _parse_windows_arg(text: str) -> List[Tuple[float, float]]:
+    # Format: "25200:28200,50400:53400"
+    s = str(text or "").strip()
+    if not s:
+        return []
+    out: List[Tuple[float, float]] = []
+    for item in s.split(","):
+        it = item.strip()
+        if not it:
+            continue
+        parts = it.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid window item={it!r}; expected start:end")
+        start = float(parts[0].strip())
+        end = float(parts[1].strip())
+        if not start < end:
+            raise ValueError(f"Invalid window {it!r}; require start < end")
+        out.append((start, end))
+    return out
+
+
+def _parse_quantiles_arg(text: str) -> List[float]:
+    s = str(text or "").strip()
+    if not s:
+        return []
+    out: List[float] = []
+    for item in s.split(","):
+        it = item.strip()
+        if not it:
+            continue
+        q = float(it)
+        if not (0.0 < q < 1.0):
+            raise ValueError(f"Invalid quantile={q}; expected 0<q<1")
+        out.append(q)
+    if not out:
+        return []
+    return sorted(set(out))
+
+
+def _in_any_window(t: float, windows: List[Tuple[float, float]]) -> bool:
+    for start, end in windows:
+        if start <= t < end:
+            return True
+    return False
+
+
+def _quantile(xs: List[float], q: float) -> float:
+    if not xs:
+        return math.nan
+    s = sorted(xs)
+    if len(s) == 1:
+        return float(s[0])
+    idx = int(round(q * (len(s) - 1)))
+    idx = max(0, min(idx, len(s) - 1))
+    return float(s[idx])
+
+
+def _is_attack_label(v: Any) -> int:
+    try:
+        x = float(v)
+    except Exception:
+        return 0
+    if math.isnan(x) or math.isinf(x):
+        return 0
+    return 1 if int(x) != 0 else 0
+
+
+def _hit(v: float, op: str, thr: float) -> bool:
+    if op == "le":
+        return bool(v <= thr)
+    if op == "lt":
+        return bool(v < thr)
+    if op == "ge":
+        return bool(v >= thr)
+    if op == "gt":
+        return bool(v > thr)
+    raise ValueError(f"Unknown op={op}")
 
 
 def _parse_trace_filename(path: Path) -> Dict[str, int]:
@@ -892,6 +978,346 @@ def _process_trace_file(
     return rows
 
 
+def _select_feature_thresholds(
+    values_0: List[float],
+    values_1: List[float],
+    candidates: List[Dict[str, Any]],
+    *,
+    t1_min_support: float,
+    t1_min_gap: float,
+    t2_min_support: float,
+    t2_min_gap: float,
+) -> Dict[str, Any]:
+    n0 = len(values_0)
+    n1 = len(values_1)
+    total = n0 + n1
+    if total <= 0 or not candidates:
+        return {
+            "n0": n0,
+            "n1": n1,
+            "candidates": [],
+            "selected": [],
+        }
+
+    evaluated: List[Dict[str, Any]] = []
+    for c in candidates:
+        op = str(c["op"])
+        thr = float(c["threshold"])
+        hit0 = sum(1 for v in values_0 if _hit(v, op, thr))
+        hit1 = sum(1 for v in values_1 if _hit(v, op, thr))
+        r0 = hit0 / n0 if n0 > 0 else 0.0
+        r1 = hit1 / n1 if n1 > 0 else 0.0
+        support = (hit0 + hit1) / total
+        gap = abs(r1 - r0)
+        score = gap * math.sqrt(max(support, 1e-12))
+        evaluated.append(
+            {
+                **c,
+                "op": op,
+                "threshold": thr,
+                "hit0": int(hit0),
+                "hit1": int(hit1),
+                "rate0": float(r0),
+                "rate1": float(r1),
+                "support": float(support),
+                "gap_abs": float(gap),
+                "score": float(score),
+            }
+        )
+
+    # First threshold: strong filter.
+    strong = [
+        e
+        for e in evaluated
+        if e["support"] >= t1_min_support and e["gap_abs"] >= t1_min_gap
+    ]
+    if strong:
+        strong = sorted(strong, key=lambda e: (e["score"], e["support"]), reverse=True)
+        t1 = strong[0]
+    else:
+        # Fallback: best score among all candidates.
+        t1 = sorted(evaluated, key=lambda e: (e["score"], e["support"]), reverse=True)[0]
+
+    selected = [t1]
+
+    # Second threshold: stronger support, slightly relaxed gap.
+    second_pool = [
+        e
+        for e in evaluated
+        if e["support"] >= max(t2_min_support, t1["support"])
+        and e["gap_abs"] >= t2_min_gap
+        and not (
+            e["op"] == t1["op"]
+            and abs(float(e["threshold"]) - float(t1["threshold"])) < 1e-9
+        )
+    ]
+    if second_pool:
+        second_pool = sorted(second_pool, key=lambda e: (e["support"], e["score"]), reverse=True)
+        selected.append(second_pool[0])
+
+    return {
+        "n0": n0,
+        "n1": n1,
+        "candidates": evaluated,
+        "selected": selected,
+    }
+
+
+def _select_recentk_thresholds(rows: List[Dict[str, Any]], cfg: BuildConfig) -> Dict[str, Any]:
+    train_rows = [
+        r
+        for r in rows
+        if _in_any_window(float(r.get("rcv_time", math.nan)), cfg.recentk_threshold_train_windows)
+    ]
+    if not train_rows:
+        raise ValueError(
+            "No rows in recent-k threshold train windows; check --recentk-threshold-train-windows."
+        )
+
+    features_low = [
+        "msg_catch_mgtsv",
+        "msg_catch_int_min_neighbor",
+        "ctx_speed_diff_mean",
+        "ctx_head_diff_mean_deg",
+    ]
+    out: Dict[str, Any] = {
+        "train_rows_in_windows": int(len(train_rows)),
+        "train_windows": [
+            {"start": float(s), "end": float(e)} for s, e in cfg.recentk_threshold_train_windows
+        ],
+        "threshold_policy": {
+            "t1_min_support": cfg.recentk_t1_min_support,
+            "t1_min_gap": cfg.recentk_t1_min_gap,
+            "t2_min_support": cfg.recentk_t2_min_support,
+            "t2_min_gap": cfg.recentk_t2_min_gap,
+            "low_quantiles": cfg.recentk_low_quantiles,
+            "high_quantiles": cfg.recentk_high_quantiles,
+        },
+        "features": {},
+    }
+
+    # Low-tail features.
+    for f in features_low:
+        vals0 = _finite_values(
+            [r.get(f, math.nan) for r in train_rows if _is_attack_label(r.get("sender_attack_flag", 0)) == 0]
+        )
+        vals1 = _finite_values(
+            [r.get(f, math.nan) for r in train_rows if _is_attack_label(r.get("sender_attack_flag", 0)) == 1]
+        )
+        all_vals = vals0 + vals1
+        candidates: List[Dict[str, Any]] = []
+        for q in cfg.recentk_low_quantiles:
+            t = _quantile(all_vals, q)
+            if math.isnan(t):
+                continue
+            candidates.append({"source": f"q{int(round(q * 100)):02d}", "op": "le", "threshold": float(t)})
+        sel = _select_feature_thresholds(
+            vals0,
+            vals1,
+            candidates,
+            t1_min_support=cfg.recentk_t1_min_support,
+            t1_min_gap=cfg.recentk_t1_min_gap,
+            t2_min_support=cfg.recentk_t2_min_support,
+            t2_min_gap=cfg.recentk_t2_min_gap,
+        )
+        out["features"][f] = {
+            "direction": "low_tail",
+            **sel,
+        }
+
+    # Triplet: keep structural threshold (>0) + high-tail quantiles on positive subset.
+    triplet_name = "ctx_triplet_ratio"
+    tr0 = _finite_values(
+        [r.get(triplet_name, math.nan) for r in train_rows if _is_attack_label(r.get("sender_attack_flag", 0)) == 0]
+    )
+    tr1 = _finite_values(
+        [r.get(triplet_name, math.nan) for r in train_rows if _is_attack_label(r.get("sender_attack_flag", 0)) == 1]
+    )
+    tr_all = tr0 + tr1
+    tr_pos = [v for v in tr_all if v > 0.0]
+    triplet_candidates: List[Dict[str, Any]] = [
+        {"source": "struct_gt_0", "op": "gt", "threshold": 0.0}
+    ]
+    for q in cfg.recentk_high_quantiles:
+        t = _quantile(tr_pos, q)
+        if math.isnan(t):
+            continue
+        # Keep strict high-tail threshold above structural boundary.
+        if t <= 0.0:
+            continue
+        triplet_candidates.append(
+            {"source": f"pos_q{int(round(q * 100)):02d}", "op": "ge", "threshold": float(t)}
+        )
+    tr_sel = _select_feature_thresholds(
+        tr0,
+        tr1,
+        triplet_candidates,
+        t1_min_support=cfg.recentk_t1_min_support,
+        t1_min_gap=cfg.recentk_t1_min_gap,
+        t2_min_support=cfg.recentk_t2_min_support,
+        t2_min_gap=cfg.recentk_t2_min_gap,
+    )
+    out["features"][triplet_name] = {
+        "direction": "high_tail_with_struct_gt_0",
+        **tr_sel,
+    }
+    return out
+
+
+def _apply_recentk_v2_features(rows: List[Dict[str, Any]], cfg: BuildConfig, recentk_thr: Dict[str, Any]) -> None:
+    sender_window_sec = max(0.0, float(cfg.sender_recent_window_sec))
+    sender_k = max(0, int(cfg.sender_recent_k))
+
+    feat_sel = recentk_thr["features"]
+
+    def _sel(feature_name: str, idx: int) -> Optional[Dict[str, Any]]:
+        xs = feat_sel.get(feature_name, {}).get("selected", [])
+        if idx < len(xs):
+            return xs[idx]
+        return None
+
+    mgtsv_t1 = _sel("msg_catch_mgtsv", 0)
+    mgtsv_t2 = _sel("msg_catch_mgtsv", 1)
+    intmin_t1 = _sel("msg_catch_int_min_neighbor", 0)
+    intmin_t2 = _sel("msg_catch_int_min_neighbor", 1)
+    triplet_t1 = _sel("ctx_triplet_ratio", 0)
+    triplet_t2 = _sel("ctx_triplet_ratio", 1)
+    speed_t1 = _sel("ctx_speed_diff_mean", 0)
+    speed_t2 = _sel("ctx_speed_diff_mean", 1)
+    head_t1 = _sel("ctx_head_diff_mean_deg", 0)
+    head_t2 = _sel("ctx_head_diff_mean_deg", 1)
+
+    grouped: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        grouped[(str(r.get("episode_id", "")), int(r.get("receiver_id", -1)))].append(r)
+
+    for _, group_rows in grouped.items():
+        group_rows.sort(
+            key=lambda r: (
+                float(r.get("rcv_time", -1.0)),
+                int(r.get("message_id", -1)),
+                int(r.get("sender_pseudo", -1)),
+            )
+        )
+        recent_by_sender: Dict[int, Deque[Dict[str, Any]]] = defaultdict(deque)
+
+        for r in group_rows:
+            t = float(r.get("rcv_time", math.nan))
+            sender = int(r.get("sender_id", -1))
+            q = recent_by_sender.setdefault(sender, deque())
+
+            if sender_window_sec > 0:
+                while q and float(q[0]["t"]) < t - sender_window_sec:
+                    q.popleft()
+            if sender_k > 0:
+                while len(q) > sender_k:
+                    q.popleft()
+
+            hist = list(q)
+            sender_hist_n = int(len(hist))
+            sender_hist_span_sec = float(t - float(hist[0]["t"])) if hist else math.nan
+
+            hist_mgtsv = _finite_values([h.get("msg_catch_mgtsv", math.nan) for h in hist])
+            hist_intmin = _finite_values([h.get("msg_catch_int_min_neighbor", math.nan) for h in hist])
+            hist_triplet = _finite_values([h.get("ctx_triplet_ratio", math.nan) for h in hist])
+            hist_speed = _finite_values([h.get("ctx_speed_diff_mean", math.nan) for h in hist])
+            hist_head = _finite_values([h.get("ctx_head_diff_mean_deg", math.nan) for h in hist])
+
+            def _count_with_sel(xs: List[float], sel: Optional[Dict[str, Any]]) -> int:
+                if sel is None:
+                    return 0
+                op = str(sel["op"])
+                thr = float(sel["threshold"])
+                return int(sum(1 for v in xs if _hit(v, op, thr)))
+
+            # Base summaries.
+            r["ctx_recentk_hist_count"] = sender_hist_n
+            r["ctx_recentk_hist_span_sec"] = sender_hist_span_sec
+            r["ctx_recentk_last_msg_catch_mgtsv"] = _safe_last(hist_mgtsv)
+            r["ctx_recentk_mean_msg_catch_mgtsv"] = _safe_mean(hist_mgtsv)
+            r["ctx_recentk_min_msg_catch_mgtsv"] = _safe_min(hist_mgtsv)
+            r["ctx_recentk_last_msg_catch_int_min_neighbor"] = _safe_last(hist_intmin)
+            r["ctx_recentk_mean_msg_catch_int_min_neighbor"] = _safe_mean(hist_intmin)
+            r["ctx_recentk_min_msg_catch_int_min_neighbor"] = _safe_min(hist_intmin)
+            r["ctx_recentk_last_ctx_triplet_ratio"] = _safe_last(hist_triplet)
+            r["ctx_recentk_mean_ctx_triplet_ratio"] = _safe_mean(hist_triplet)
+            r["ctx_recentk_max_ctx_triplet_ratio"] = max(hist_triplet) if hist_triplet else math.nan
+            r["ctx_recentk_last_ctx_speed_diff_mean"] = _safe_last(hist_speed)
+            r["ctx_recentk_mean_ctx_speed_diff_mean"] = _safe_mean(hist_speed)
+            r["ctx_recentk_min_ctx_speed_diff_mean"] = _safe_min(hist_speed)
+            r["ctx_recentk_last_ctx_head_diff_mean_deg"] = _safe_last(hist_head)
+            r["ctx_recentk_mean_ctx_head_diff_mean_deg"] = _safe_mean(hist_head)
+            r["ctx_recentk_min_ctx_head_diff_mean_deg"] = _safe_min(hist_head)
+
+            # New explicit threshold summaries.
+            mgtsv_n_t1 = _count_with_sel(hist_mgtsv, mgtsv_t1)
+            mgtsv_n_t2 = _count_with_sel(hist_mgtsv, mgtsv_t2)
+            intmin_n_t1 = _count_with_sel(hist_intmin, intmin_t1)
+            intmin_n_t2 = _count_with_sel(hist_intmin, intmin_t2)
+            triplet_n_t1 = _count_with_sel(hist_triplet, triplet_t1)
+            triplet_n_t2 = _count_with_sel(hist_triplet, triplet_t2)
+            triplet_n_gt0 = _count_gt(hist_triplet, 0.0)
+            speed_n_t1 = _count_with_sel(hist_speed, speed_t1)
+            speed_n_t2 = _count_with_sel(hist_speed, speed_t2)
+            head_n_t1 = _count_with_sel(hist_head, head_t1)
+            head_n_t2 = _count_with_sel(hist_head, head_t2)
+
+            r["ctx_recentk_count_msg_catch_mgtsv_t1"] = mgtsv_n_t1
+            r["ctx_recentk_count_msg_catch_mgtsv_t2"] = mgtsv_n_t2
+            r["ctx_recentk_frac_msg_catch_mgtsv_t1"] = _safe_ratio(mgtsv_n_t1, len(hist_mgtsv))
+            r["ctx_recentk_frac_msg_catch_mgtsv_t2"] = _safe_ratio(mgtsv_n_t2, len(hist_mgtsv))
+
+            r["ctx_recentk_count_msg_catch_int_min_neighbor_t1"] = intmin_n_t1
+            r["ctx_recentk_count_msg_catch_int_min_neighbor_t2"] = intmin_n_t2
+            r["ctx_recentk_frac_msg_catch_int_min_neighbor_t1"] = _safe_ratio(intmin_n_t1, len(hist_intmin))
+            r["ctx_recentk_frac_msg_catch_int_min_neighbor_t2"] = _safe_ratio(intmin_n_t2, len(hist_intmin))
+
+            r["ctx_recentk_count_ctx_triplet_ratio_t1"] = triplet_n_t1
+            r["ctx_recentk_count_ctx_triplet_ratio_t2"] = triplet_n_t2
+            r["ctx_recentk_frac_ctx_triplet_ratio_t1"] = _safe_ratio(triplet_n_t1, len(hist_triplet))
+            r["ctx_recentk_frac_ctx_triplet_ratio_t2"] = _safe_ratio(triplet_n_t2, len(hist_triplet))
+
+            r["ctx_recentk_count_ctx_speed_diff_mean_t1"] = speed_n_t1
+            r["ctx_recentk_count_ctx_speed_diff_mean_t2"] = speed_n_t2
+            r["ctx_recentk_frac_ctx_speed_diff_mean_t1"] = _safe_ratio(speed_n_t1, len(hist_speed))
+            r["ctx_recentk_frac_ctx_speed_diff_mean_t2"] = _safe_ratio(speed_n_t2, len(hist_speed))
+
+            r["ctx_recentk_count_ctx_head_diff_mean_deg_t1"] = head_n_t1
+            r["ctx_recentk_count_ctx_head_diff_mean_deg_t2"] = head_n_t2
+            r["ctx_recentk_frac_ctx_head_diff_mean_deg_t1"] = _safe_ratio(head_n_t1, len(hist_head))
+            r["ctx_recentk_frac_ctx_head_diff_mean_deg_t2"] = _safe_ratio(head_n_t2, len(hist_head))
+
+            # Backward-compatible legacy columns (now mapped to selected thresholds).
+            r["ctx_recentk_count_msg_catch_mgtsv_le_0p8"] = mgtsv_n_t1
+            r["ctx_recentk_count_msg_catch_mgtsv_le_0p95"] = mgtsv_n_t2
+            r["ctx_recentk_count_msg_catch_int_min_neighbor_le_0p8"] = intmin_n_t1
+            # Keep structural threshold explicitly for backward compatibility and interpretability.
+            r["ctx_recentk_count_ctx_triplet_ratio_gt_0"] = triplet_n_gt0
+            r["ctx_recentk_frac_ctx_triplet_ratio_gt_0"] = _safe_ratio(triplet_n_gt0, len(hist_triplet))
+            r["ctx_recentk_count_ctx_speed_diff_mean_lt_0p2"] = speed_n_t1
+            r["ctx_recentk_count_ctx_speed_diff_mean_lt_5"] = speed_n_t2
+            r["ctx_recentk_frac_ctx_speed_diff_mean_lt_5"] = _safe_ratio(speed_n_t2, len(hist_speed))
+            r["ctx_recentk_count_ctx_head_diff_mean_deg_lt_1"] = head_n_t1
+            r["ctx_recentk_count_ctx_head_diff_mean_deg_lt_5"] = head_n_t2
+            r["ctx_recentk_frac_ctx_head_diff_mean_deg_lt_5"] = _safe_ratio(head_n_t2, len(hist_head))
+
+            snap = {
+                "t": t,
+                "msg_catch_mgtsv": r.get("msg_catch_mgtsv", math.nan),
+                "msg_catch_int_min_neighbor": r.get("msg_catch_int_min_neighbor", math.nan),
+                "ctx_triplet_ratio": r.get("ctx_triplet_ratio", math.nan),
+                "ctx_speed_diff_mean": r.get("ctx_speed_diff_mean", math.nan),
+                "ctx_head_diff_mean_deg": r.get("ctx_head_diff_mean_deg", math.nan),
+            }
+            q.append(snap)
+            if sender_window_sec > 0:
+                while q and float(q[0]["t"]) < t - sender_window_sec:
+                    q.popleft()
+            if sender_k > 0:
+                while len(q) > sender_k:
+                    q.popleft()
+
+
 def _resolve_input_paths(pattern: str) -> List[Path]:
     paths = [Path(p) for p in glob.glob(pattern, recursive=True)]
     files = [p for p in paths if p.is_file() and p.name.startswith("traceJSON-") and p.suffix == ".json"]
@@ -990,8 +1416,62 @@ def parse_args() -> BuildConfig:
         default=5.0,
         help="Sender history time window (seconds) for ctx_recentk_* summaries.",
     )
+    ap.add_argument(
+        "--recentk-threshold-train-windows",
+        type=str,
+        default="25200:28200,50400:53400",
+        help=(
+            "Comma-separated training windows for threshold selection, "
+            "e.g. 25200:28200,50400:53400."
+        ),
+    )
+    ap.add_argument(
+        "--recentk-low-quantiles",
+        type=str,
+        default="0.05,0.10,0.20,0.30",
+        help="Low-tail quantiles (comma-separated) for mgtsv/int_min/speed/head threshold candidates.",
+    )
+    ap.add_argument(
+        "--recentk-high-quantiles",
+        type=str,
+        default="0.50,0.80,0.90",
+        help="High-tail quantiles (comma-separated; on positive values) for triplet threshold candidates.",
+    )
+    ap.add_argument(
+        "--recentk-t1-min-support",
+        type=float,
+        default=0.05,
+        help="Minimum support for first (strong) threshold selection.",
+    )
+    ap.add_argument(
+        "--recentk-t1-min-gap",
+        type=float,
+        default=0.10,
+        help="Minimum |P(hit|attack)-P(hit|benign)| for first threshold selection.",
+    )
+    ap.add_argument(
+        "--recentk-t2-min-support",
+        type=float,
+        default=0.10,
+        help="Minimum support for second threshold selection (typically stronger support).",
+    )
+    ap.add_argument(
+        "--recentk-t2-min-gap",
+        type=float,
+        default=0.06,
+        help="Minimum gap for second threshold selection (can be relaxed vs t1).",
+    )
     ap.add_argument("--workers", type=int, default=1)
     args = ap.parse_args()
+    recentk_windows = _parse_windows_arg(args.recentk_threshold_train_windows)
+    recentk_low_q = _parse_quantiles_arg(args.recentk_low_quantiles)
+    recentk_high_q = _parse_quantiles_arg(args.recentk_high_quantiles)
+    if not recentk_windows:
+        raise ValueError("recentk threshold selection requires at least one train window.")
+    if not recentk_low_q:
+        raise ValueError("recentk-low-quantiles must include at least one quantile.")
+    if not recentk_high_q:
+        raise ValueError("recentk-high-quantiles must include at least one quantile.")
     return BuildConfig(
         input_glob=args.input_glob,
         output_dir=args.output_dir,
@@ -1008,6 +1488,13 @@ def parse_args() -> BuildConfig:
         sim_heading_thresh_deg=args.sim_heading_thresh_deg,
         sender_recent_k=max(0, int(args.sender_recent_k)),
         sender_recent_window_sec=max(0.0, float(args.sender_recent_window_sec)),
+        recentk_threshold_train_windows=recentk_windows,
+        recentk_low_quantiles=recentk_low_q,
+        recentk_high_quantiles=recentk_high_q,
+        recentk_t1_min_support=max(0.0, min(1.0, float(args.recentk_t1_min_support))),
+        recentk_t1_min_gap=max(0.0, min(1.0, float(args.recentk_t1_min_gap))),
+        recentk_t2_min_support=max(0.0, min(1.0, float(args.recentk_t2_min_support))),
+        recentk_t2_min_gap=max(0.0, min(1.0, float(args.recentk_t2_min_gap))),
         workers=max(1, int(args.workers)),
     )
 
@@ -1057,6 +1544,11 @@ def main() -> None:
         )
     )
 
+    print("[recentk] selecting train-window thresholds...", flush=True)
+    recentk_thr = _select_recentk_thresholds(all_rows, cfg)
+    print("[recentk] applying selected thresholds to ctx_recentk_* summaries...", flush=True)
+    _apply_recentk_v2_features(all_rows, cfg, recentk_thr)
+
     out_path, actual_format = _write_output(all_rows, Path(cfg.output_dir), cfg.output_format)
     unique_episodes = len({r["episode_id"] for r in all_rows})
     unique_receivers = len({r["receiver_id"] for r in all_rows})
@@ -1068,6 +1560,7 @@ def main() -> None:
         "output_format_requested": cfg.output_format,
         "output_format_actual": actual_format,
         "output_path": str(out_path).replace("\\", "/"),
+        "recentk_thresholds": recentk_thr,
     }
     meta_path = _write_run_config(Path(cfg.meta_dir), cfg, params, stats)
 

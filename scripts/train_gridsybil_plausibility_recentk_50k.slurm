@@ -14,6 +14,7 @@ export SLURM_EXPORT_ENV=ALL
 WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
 CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility_recentk_50k.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-}"
+TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-}"
 
 module load cuda/12.3.0
 module load anaconda3/2023.09-0
@@ -28,12 +29,23 @@ export OMP_NUM_THREADS=1
 echo "WORK_DIR=$WORK_DIR"
 echo "CONFIG=$CONFIG"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
+echo "TRAIN_OVERRIDES=$TRAIN_OVERRIDES"
+
+OVERRIDE_ARGS=()
+if [[ -n "$TRAIN_OVERRIDES" ]]; then
+  read -r -a _overrides <<< "$TRAIN_OVERRIDES"
+  for kv in "${_overrides[@]}"; do
+    OVERRIDE_ARGS+=(--set "$kv")
+  done
+fi
 
 if [[ -n "$OUTPUT_DIR" ]]; then
   srun python -m src.training.train_lora_qwen_gridsybil_plausibility \
     --config "$CONFIG" \
-    --output_dir "$OUTPUT_DIR"
+    --output_dir "$OUTPUT_DIR" \
+    "${OVERRIDE_ARGS[@]}"
 else
   srun python -m src.training.train_lora_qwen_gridsybil_plausibility \
-    --config "$CONFIG"
+    --config "$CONFIG" \
+    "${OVERRIDE_ARGS[@]}"
 fi

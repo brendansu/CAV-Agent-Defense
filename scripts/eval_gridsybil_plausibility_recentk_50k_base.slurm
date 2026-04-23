@@ -16,6 +16,7 @@ CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility
 SPLIT="${SPLIT:-test}"  # val / test
 EXP_NAME="${EXP_NAME:-recentk_50k_persample}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d)_${EXP_NAME}}"
+EVAL_OVERRIDES="${EVAL_OVERRIDES:-}"
 
 NUM_SHARDS=8
 SHARD_INDEX=${SLURM_ARRAY_TASK_ID}
@@ -44,6 +45,15 @@ echo "MAX_SAMPLES=$MAX_SAMPLES"
 echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
 echo "LOG_ROW_PATH=$LOG_ROW_PATH"
 echo "PROGRESS_EVERY_SAMPLES=$PROGRESS_EVERY_SAMPLES"
+echo "EVAL_OVERRIDES=$EVAL_OVERRIDES"
+
+OVERRIDE_ARGS=()
+if [[ -n "$EVAL_OVERRIDES" ]]; then
+  read -r -a _overrides <<< "$EVAL_OVERRIDES"
+  for kv in "${_overrides[@]}"; do
+    OVERRIDE_ARGS+=(--set "$kv")
+  done
+fi
 
 if [[ "$SPLIT" != "val" && "$SPLIT" != "test" ]]; then
   echo "[ERROR] SPLIT must be val or test, got: $SPLIT" >&2
@@ -63,7 +73,8 @@ if [[ -n "$MAX_NEW_TOKENS" ]]; then
     --run_id "$RUN_ID" \
     --log_row_path "$LOG_ROW_PATH" \
     --progress_every_samples "$PROGRESS_EVERY_SAMPLES" \
-    --max_new_tokens "$MAX_NEW_TOKENS"
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    "${OVERRIDE_ARGS[@]}"
 else
   srun python -m src.eval.eval_gridsybil_plausibility \
     --config "$CONFIG" \
@@ -76,5 +87,6 @@ else
     --shard_index "$SHARD_INDEX" \
     --run_id "$RUN_ID" \
     --log_row_path "$LOG_ROW_PATH" \
-    --progress_every_samples "$PROGRESS_EVERY_SAMPLES"
+    --progress_every_samples "$PROGRESS_EVERY_SAMPLES" \
+    "${OVERRIDE_ARGS[@]}"
 fi

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import gzip
 import json
 import random
@@ -70,6 +71,64 @@ def load_yaml_config(path: Path) -> Dict[str, Any]:
     if not isinstance(cfg, dict):
         raise ValueError(f"Config {path} must be a mapping.")
     return cfg
+
+
+def _parse_override_value(raw: str) -> Any:
+    text = raw.strip()
+    if text == "":
+        return ""
+    lowered = text.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "none":
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return text
+
+
+def _set_nested_config_value(config: Dict[str, Any], key_path: str, value: Any) -> None:
+    keys = [k.strip() for k in key_path.split(".") if k.strip()]
+    if not keys:
+        raise ValueError("Override key path is empty.")
+    cursor: Dict[str, Any] = config
+    for key in keys[:-1]:
+        existing = cursor.get(key)
+        if existing is None:
+            new_node: Dict[str, Any] = {}
+            cursor[key] = new_node
+            cursor = new_node
+            continue
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"Cannot set nested override '{key_path}': '{key}' is not a mapping "
+                f"(got {type(existing).__name__})."
+            )
+        cursor = existing
+    cursor[keys[-1]] = value
+
+
+def apply_config_overrides(config: Dict[str, Any], override_items: List[str]) -> Dict[str, Any]:
+    applied: Dict[str, Any] = {}
+    for item in override_items:
+        text = str(item).strip()
+        if "=" not in text:
+            raise ValueError(f"Invalid override '{item}'; expected KEY=VALUE.")
+        key, raw_val = text.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid override '{item}'; key cannot be empty.")
+        parsed_value = _parse_override_value(raw_val)
+        _set_nested_config_value(config, key, parsed_value)
+        applied[key] = parsed_value
+    return applied
 
 
 def parse_args() -> EvalConfig:
@@ -145,10 +204,26 @@ def parse_args() -> EvalConfig:
         action="store_true",
         help="Disable gzip wrapper when --log_row_path does not end with .gz.",
     )
+    p.add_argument(
+        "--set",
+        dest="config_overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Override YAML config entries with KEY=VALUE (repeatable). "
+            "Supports nested keys via dot paths. Explicit CLI options "
+            "(e.g. --prompt_variant, --max_new_tokens) take precedence."
+        ),
+    )
     args = p.parse_args()
 
     cfg_path = Path(args.config)
     y = load_yaml_config(cfg_path)
+    applied_overrides = apply_config_overrides(y, args.config_overrides)
+    if applied_overrides:
+        print("Applied eval config overrides:", flush=True)
+        print(json.dumps(applied_overrides, indent=2, ensure_ascii=False), flush=True)
 
     parquet_dir = Path(y.get("parquet_dir", "data/processed/plausibility_messages_split"))
     if not parquet_dir.is_absolute():

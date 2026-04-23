@@ -55,15 +55,96 @@ def trace_run_stem(path: Path) -> str:
     return f"{path.parent.parent.name}_{path.parent.name}"
 
 
+def normalize_windows(raw: Any, field_name: str) -> List[Tuple[float, float]]:
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_name} must be a list of {{start,end}} mappings.")
+    out: List[Tuple[float, float]] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"{field_name}[{i}] must be a mapping.")
+        if "start" not in item or "end" not in item:
+            raise ValueError(f"{field_name}[{i}] must include start and end.")
+        start = float(item["start"])
+        end = float(item["end"])
+        if not start < end:
+            raise ValueError(f"{field_name}[{i}] must satisfy start < end; got {start} >= {end}.")
+        out.append((start, end))
+    return out
+
+
+def overlap_windows(a: Tuple[float, float], b: Tuple[float, float]) -> bool:
+    # left-closed right-open intervals [start, end)
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def validate_no_cross_split_overlap(
+    train_windows: List[Tuple[float, float]],
+    val_windows: List[Tuple[float, float]],
+    test_windows: List[Tuple[float, float]],
+) -> None:
+    named = [
+        ("train", train_windows),
+        ("val", val_windows),
+        ("test", test_windows),
+    ]
+    for i in range(len(named)):
+        left_name, left_windows = named[i]
+        for j in range(i + 1, len(named)):
+            right_name, right_windows = named[j]
+            for a in left_windows:
+                for b in right_windows:
+                    if overlap_windows(a, b):
+                        raise ValueError(
+                            f"Time windows overlap between {left_name} and {right_name}: {a} vs {b}"
+                        )
+
+
+def split_name_from_time(
+    rcv_time: Any,
+    train_windows: List[Tuple[float, float]],
+    val_windows: List[Tuple[float, float]],
+    test_windows: List[Tuple[float, float]],
+) -> Optional[str]:
+    if rcv_time is None:
+        return None
+    t = float(rcv_time)
+    for start, end in train_windows:
+        if start <= t < end:
+            return "train"
+    for start, end in val_windows:
+        if start <= t < end:
+            return "val"
+    for start, end in test_windows:
+        if start <= t < end:
+            return "test"
+    return None
+
+
 def load_split(path: Path) -> Dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
+    has_time_windows = all(k in payload for k in ("train_windows", "val_windows", "test_windows"))
+    if has_time_windows:
+        train_windows = normalize_windows(payload.get("train_windows"), "train_windows")
+        val_windows = normalize_windows(payload.get("val_windows"), "val_windows")
+        test_windows = normalize_windows(payload.get("test_windows"), "test_windows")
+        validate_no_cross_split_overlap(train_windows, val_windows, test_windows)
+        payload["split_mode"] = "time_window"
+        payload["train_windows"] = train_windows
+        payload["val_windows"] = val_windows
+        payload["test_windows"] = test_windows
+        return payload
+
     if "train_runs" not in payload or "test_runs" not in payload:
-        raise ValueError("split json must include train_runs and test_runs")
+        raise ValueError(
+            "split json must include either train_windows/val_windows/test_windows "
+            "or train_runs/test_runs."
+        )
     train_runs = list(payload["train_runs"])
     test_runs = list(payload["test_runs"])
     overlap = set(train_runs).intersection(set(test_runs))
     if overlap:
         raise ValueError(f"train_runs and test_runs overlap: {sorted(overlap)}")
+    payload["split_mode"] = "run"
     return payload
 
 
@@ -131,7 +212,26 @@ def label_sender(
     return 1 if is_attacker(int(attack_flag), attacker_rule, attack_flag_eq) else 0
 
 
-def split_name(run_stem: str, train_runs: Set[str], test_runs: Set[str]) -> Optional[str]:
+def split_name(
+    run_stem: str,
+    train_runs: Set[str],
+    test_runs: Set[str],
+    *,
+    split_mode: str,
+    rcv_time: Any = None,
+    train_windows: Optional[List[Tuple[float, float]]] = None,
+    val_windows: Optional[List[Tuple[float, float]]] = None,
+    test_windows: Optional[List[Tuple[float, float]]] = None,
+) -> Optional[str]:
+    if split_mode == "time_window":
+        if train_windows is None or val_windows is None or test_windows is None:
+            raise ValueError("time_window mode requires train_windows/val_windows/test_windows.")
+        return split_name_from_time(
+            rcv_time=rcv_time,
+            train_windows=train_windows,
+            val_windows=val_windows,
+            test_windows=test_windows,
+        )
     if run_stem in test_runs:
         return "test"
     if run_stem in train_runs:
@@ -192,6 +292,10 @@ def count_train_labels(
     batch_size: int,
     train_runs: Set[str],
     test_runs: Set[str],
+    split_mode: str,
+    train_windows: Optional[List[Tuple[float, float]]],
+    val_windows: Optional[List[Tuple[float, float]]],
+    test_windows: Optional[List[Tuple[float, float]]],
     attacker_rule: str,
     attack_flag_eq: int,
     global_map: Dict[int, int],
@@ -205,13 +309,15 @@ def count_train_labels(
 ) -> Tuple[Dict[int, int], Dict[str, int]]:
     pf = pq.ParquetFile(parquet_path)
     needed = ["episode_id", "sender_id"]
+    if split_mode == "time_window":
+        needed.append("rcv_time")
     present = set(pf.schema_arrow.names)
     for col in needed:
         if col not in present:
             raise ValueError(f"input parquet missing required column: {col}")
 
     train_label_counts = {0: 0, 1: 0}
-    split_row_counts = {"train_candidate": 0, "test": 0, "unknown_run": 0}
+    split_row_counts = {"train_candidate": 0, "val": 0, "test": 0, "unknown_run": 0}
 
     if not quiet:
         _log(
@@ -229,9 +335,21 @@ def count_train_labels(
         for row in iter_row_dicts(batch):
             episode_id = str(row["episode_id"])
             run_stem = run_stem_from_episode_id(episode_id)
-            s = split_name(run_stem, train_runs, test_runs)
+            s = split_name(
+                run_stem,
+                train_runs,
+                test_runs,
+                split_mode=split_mode,
+                rcv_time=row.get("rcv_time"),
+                train_windows=train_windows,
+                val_windows=val_windows,
+                test_windows=test_windows,
+            )
             if s is None:
                 split_row_counts["unknown_run"] += 1
+                continue
+            if s == "val":
+                split_row_counts["val"] += 1
                 continue
             if s == "test":
                 split_row_counts["test"] += 1
@@ -280,6 +398,10 @@ def select_val_keys(
     batch_size: int,
     train_runs: Set[str],
     test_runs: Set[str],
+    split_mode: str,
+    train_windows: Optional[List[Tuple[float, float]]],
+    val_windows: Optional[List[Tuple[float, float]]],
+    test_windows: Optional[List[Tuple[float, float]]],
     attacker_rule: str,
     attack_flag_eq: int,
     global_map: Dict[int, int],
@@ -318,7 +440,16 @@ def select_val_keys(
         for row in rows:
             episode_id = str(row["episode_id"])
             run_stem = run_stem_from_episode_id(episode_id)
-            s = split_name(run_stem, train_runs, test_runs)
+            s = split_name(
+                run_stem,
+                train_runs,
+                test_runs,
+                split_mode=split_mode,
+                rcv_time=row.get("rcv_time"),
+                train_windows=train_windows,
+                val_windows=val_windows,
+                test_windows=test_windows,
+            )
             if s != "train":
                 continue
 
@@ -380,6 +511,10 @@ def write_split_parquets(
     batch_size: int,
     train_runs: Set[str],
     test_runs: Set[str],
+    split_mode: str,
+    train_windows: Optional[List[Tuple[float, float]]],
+    val_windows: Optional[List[Tuple[float, float]]],
+    test_windows: Optional[List[Tuple[float, float]]],
     attacker_rule: str,
     attack_flag_eq: int,
     global_map: Dict[int, int],
@@ -437,7 +572,16 @@ def write_split_parquets(
             for row in rows:
                 episode_id = str(row["episode_id"])
                 run_stem = run_stem_from_episode_id(episode_id)
-                s = split_name(run_stem, train_runs, test_runs)
+                s = split_name(
+                    run_stem,
+                    train_runs,
+                    test_runs,
+                    split_mode=split_mode,
+                    rcv_time=row.get("rcv_time"),
+                    train_windows=train_windows,
+                    val_windows=val_windows,
+                    test_windows=test_windows,
+                )
                 if s is None:
                     stats["dropped"]["unknown_run"] += 1
                     labels.append(0)
@@ -455,7 +599,7 @@ def write_split_parquets(
                     attack_map_mode=attack_map_mode,
                 )
 
-                if s == "train":
+                if split_mode == "run" and s == "train":
                     key = build_row_key(row, key_cols)
                     s = "val" if key in val_keys else "train"
 
@@ -544,7 +688,11 @@ def parse_args() -> argparse.Namespace:
         "--split-json",
         type=Path,
         default=Path("data/processed/splits/gridsybil_plausibility_messages.json"),
-        help="Split config with train_runs/test_runs/val_policy.",
+        help=(
+            "Split config. Supports either "
+            "{train_runs,test_runs,val_policy} (legacy) or "
+            "{train_windows,val_windows,test_windows} with left-closed right-open windows."
+        ),
     )
     ap.add_argument(
         "--raw-glob",
@@ -580,7 +728,10 @@ def parse_args() -> argparse.Namespace:
         "--seed",
         type=int,
         default=None,
-        help="Optional override for val sampling seed; default from split_json val_policy.seed.",
+        help=(
+            "Optional override for val sampling seed in legacy run-based mode; "
+            "ignored in time-window mode."
+        ),
     )
     ap.add_argument(
         "--out-train",
@@ -643,11 +794,42 @@ def main() -> None:
         _log("[start] parquet row count (metadata): " + (str(total_rows) if total_rows is not None else "unknown"))
 
     split_spec = load_split(args.split_json)
-    train_runs = set(split_spec["train_runs"])
-    test_runs = set(split_spec["test_runs"])
-    val_policy = split_spec.get("val_policy", {})
-    requested_val = int(val_policy.get("n", 5000))
-    seed = int(args.seed if args.seed is not None else val_policy.get("seed", 42))
+    split_mode = str(split_spec.get("split_mode", "run"))
+    train_runs: Set[str] = set(split_spec.get("train_runs", []))
+    test_runs: Set[str] = set(split_spec.get("test_runs", []))
+    train_windows: Optional[List[Tuple[float, float]]] = None
+    val_windows: Optional[List[Tuple[float, float]]] = None
+    test_windows: Optional[List[Tuple[float, float]]] = None
+    val_policy: Dict[str, Any] = {}
+    requested_val = 0
+    seed: Optional[int] = None
+    val_targets: Optional[Dict[int, int]] = None
+    val_keys: Set[str] = set()
+    train_label_counts: Optional[Dict[int, int]] = None
+    pass1_split_counts: Optional[Dict[str, int]] = None
+
+    if split_mode == "time_window":
+        train_windows = split_spec["train_windows"]
+        val_windows = split_spec["val_windows"]
+        test_windows = split_spec["test_windows"]
+        present_cols = set(pq.ParquetFile(args.input_parquet).schema_arrow.names)
+        if "rcv_time" not in present_cols:
+            raise ValueError("time_window split mode requires rcv_time column in input parquet.")
+        if not args.quiet:
+            _log(
+                "[split] mode=time_window "
+                f"train_windows={train_windows} val_windows={val_windows} test_windows={test_windows}"
+            )
+    else:
+        val_policy = split_spec.get("val_policy", {})
+        requested_val = int(val_policy.get("n", 5000))
+        seed = int(args.seed if args.seed is not None else val_policy.get("seed", 42))
+        if not args.quiet:
+            _log(
+                "[split] mode=run "
+                f"train_runs={len(train_runs)} test_runs={len(test_runs)} "
+                f"val_policy={val_policy}"
+            )
 
     trace_paths = collect_trace_paths(args.raw_glob)
     if not trace_paths:
@@ -662,56 +844,70 @@ def main() -> None:
                 f"distinct run stems={len(per_run_map)}"
             )
 
-    train_label_counts, pass1_split_counts = count_train_labels(
-        parquet_path=args.input_parquet,
-        batch_size=args.batch_size,
-        train_runs=train_runs,
-        test_runs=test_runs,
-        attacker_rule=args.attacker_rule,
-        attack_flag_eq=args.attack_flag,
-        global_map=global_map,
-        per_run_map=per_run_map,
-        attack_map_mode=args.attack_map_mode,
-        strict_unknown_runs=args.strict_unknown_runs,
-        total_rows=total_rows,
-        progress_every_batches=args.progress_every_batches,
-        quiet=args.quiet,
-    )
-
-    val0, val1 = compute_val_targets(
-        n_train_0=train_label_counts[0],
-        n_train_1=train_label_counts[1],
-        requested_val=requested_val,
-    )
-    val_targets = {0: val0, 1: val1}
-    if not args.quiet:
-        _log(
-            f"[between] val sampling: requested={requested_val} from train rows; "
-            f"targets label0={val_targets[0]} label1={val_targets[1]} (seed={seed})"
+    if split_mode == "run":
+        assert seed is not None
+        train_label_counts, pass1_split_counts = count_train_labels(
+            parquet_path=args.input_parquet,
+            batch_size=args.batch_size,
+            train_runs=train_runs,
+            test_runs=test_runs,
+            split_mode=split_mode,
+            train_windows=train_windows,
+            val_windows=val_windows,
+            test_windows=test_windows,
+            attacker_rule=args.attacker_rule,
+            attack_flag_eq=args.attack_flag,
+            global_map=global_map,
+            per_run_map=per_run_map,
+            attack_map_mode=args.attack_map_mode,
+            strict_unknown_runs=args.strict_unknown_runs,
+            total_rows=total_rows,
+            progress_every_batches=args.progress_every_batches,
+            quiet=args.quiet,
         )
 
-    val_keys = select_val_keys(
-        parquet_path=args.input_parquet,
-        batch_size=args.batch_size,
-        train_runs=train_runs,
-        test_runs=test_runs,
-        attacker_rule=args.attacker_rule,
-        attack_flag_eq=args.attack_flag,
-        global_map=global_map,
-        per_run_map=per_run_map,
-        attack_map_mode=args.attack_map_mode,
-        seed=seed,
-        val_targets=val_targets,
-        total_rows=total_rows,
-        progress_every_batches=args.progress_every_batches,
-        quiet=args.quiet,
-    )
+        val0, val1 = compute_val_targets(
+            n_train_0=train_label_counts[0],
+            n_train_1=train_label_counts[1],
+            requested_val=requested_val,
+        )
+        val_targets = {0: val0, 1: val1}
+        if not args.quiet:
+            _log(
+                f"[between] val sampling: requested={requested_val} from train rows; "
+                f"targets label0={val_targets[0]} label1={val_targets[1]} (seed={seed})"
+            )
+
+        val_keys = select_val_keys(
+            parquet_path=args.input_parquet,
+            batch_size=args.batch_size,
+            train_runs=train_runs,
+            test_runs=test_runs,
+            split_mode=split_mode,
+            train_windows=train_windows,
+            val_windows=val_windows,
+            test_windows=test_windows,
+            attacker_rule=args.attacker_rule,
+            attack_flag_eq=args.attack_flag,
+            global_map=global_map,
+            per_run_map=per_run_map,
+            attack_map_mode=args.attack_map_mode,
+            seed=seed,
+            val_targets=val_targets,
+            total_rows=total_rows,
+            progress_every_batches=args.progress_every_batches,
+            quiet=args.quiet,
+        )
 
     write_stats = write_split_parquets(
         parquet_path=args.input_parquet,
         batch_size=args.batch_size,
         train_runs=train_runs,
         test_runs=test_runs,
+        split_mode=split_mode,
+        train_windows=train_windows,
+        val_windows=val_windows,
+        test_windows=test_windows,
         attacker_rule=args.attacker_rule,
         attack_flag_eq=args.attack_flag,
         global_map=global_map,
@@ -729,16 +925,30 @@ def main() -> None:
 
     args.dataset_meta.parent.mkdir(parents=True, exist_ok=True)
     meta = {
-        "schema_version": "gridsybil_plausibility_message_split_v1",
+        "schema_version": (
+            "gridsybil_plausibility_message_split_v2_time_window"
+            if split_mode == "time_window"
+            else "gridsybil_plausibility_message_split_v1"
+        ),
         "source_parquet": str(args.input_parquet).replace("\\", "/"),
         "split_json": str(args.split_json).replace("\\", "/"),
+        "split_mode": split_mode,
+        "time_windows": (
+            {
+                "train": [{"start": s, "end": e} for s, e in (train_windows or [])],
+                "val": [{"start": s, "end": e} for s, e in (val_windows or [])],
+                "test": [{"start": s, "end": e} for s, e in (test_windows or [])],
+            }
+            if split_mode == "time_window"
+            else None
+        ),
         "raw_glob": args.raw_glob,
         "attack_map_mode": args.attack_map_mode,
         "attacker_rule": args.attacker_rule,
         "attack_flag_equals": args.attack_flag if args.attacker_rule == "equals" else None,
         "label_definition": "label=1 iff sender_id belongs to attacker vehicle set derived from trace filename vehicle_id->attack_flag map",
         "seed": seed,
-        "val_policy": val_policy,
+        "val_policy": val_policy if split_mode == "run" else None,
         "train_label_counts_before_val": train_label_counts,
         "val_targets": val_targets,
         "num_val_selected_keys": len(val_keys),
