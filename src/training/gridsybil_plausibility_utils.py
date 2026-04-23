@@ -12,6 +12,7 @@ PROMPT_VARIANTS: Tuple[str, ...] = (
     "default",
     "traffic_neutral",
     "traffic_neutral_recentk",
+    "replay_neutral_recentk",
     "traffic_benign_prior",
     "traffic_compact",
 )
@@ -101,8 +102,8 @@ FEATURE_ALIASES: Dict[str, str] = {
     "ctx_recentk_count_msg_catch_int_min_neighbor_le_0p8": "legacy alias: recent-window count overlap min-neighbor at autoq threshold (mapped to T1)",
     "ctx_recentk_last_ctx_triplet_ratio": "recent-window last similar-triplet ratio",
     "ctx_recentk_mean_ctx_triplet_ratio": "recent-window mean similar-triplet ratio",
-    "ctx_recentk_count_ctx_triplet_ratio_gt_0": "recent-window count triplet ratio > 0",
-    "ctx_recentk_frac_ctx_triplet_ratio_gt_0": "recent-window fraction triplet ratio > 0",
+    "ctx_recentk_count_ctx_triplet_ratio_gt_0": "recent-window count triplet ratio > 0 (structural non-zero threshold)",
+    "ctx_recentk_frac_ctx_triplet_ratio_gt_0": "recent-window fraction triplet ratio > 0 (structural non-zero threshold)",
     "ctx_recentk_last_ctx_speed_diff_mean": "recent-window last mean neighbor speed diff",
     "ctx_recentk_mean_ctx_speed_diff_mean": "recent-window mean of mean neighbor speed diff",
     "ctx_recentk_min_ctx_speed_diff_mean": "recent-window min mean neighbor speed diff",
@@ -116,26 +117,26 @@ FEATURE_ALIASES: Dict[str, str] = {
     "ctx_recentk_count_ctx_head_diff_mean_deg_lt_5": "legacy alias: recent-window count mean heading diff at autoq threshold (mapped to T2)",
     "ctx_recentk_frac_ctx_head_diff_mean_deg_lt_5": "legacy alias: recent-window fraction mean heading diff at autoq threshold (mapped to T2)",
     # AutoQ explicit threshold summaries.
-    "ctx_recentk_count_msg_catch_mgtsv_t1": "recent-window count MGTSV hits autoq T1 threshold",
-    "ctx_recentk_frac_msg_catch_mgtsv_t1": "recent-window fraction MGTSV hits autoq T1 threshold",
-    "ctx_recentk_count_msg_catch_mgtsv_t2": "recent-window count MGTSV hits autoq T2 threshold",
-    "ctx_recentk_frac_msg_catch_mgtsv_t2": "recent-window fraction MGTSV hits autoq T2 threshold",
-    "ctx_recentk_count_msg_catch_int_min_neighbor_t1": "recent-window count overlap min-neighbor hits autoq T1 threshold",
-    "ctx_recentk_frac_msg_catch_int_min_neighbor_t1": "recent-window fraction overlap min-neighbor hits autoq T1 threshold",
-    "ctx_recentk_count_msg_catch_int_min_neighbor_t2": "recent-window count overlap min-neighbor hits autoq T2 threshold",
-    "ctx_recentk_frac_msg_catch_int_min_neighbor_t2": "recent-window fraction overlap min-neighbor hits autoq T2 threshold",
-    "ctx_recentk_count_ctx_triplet_ratio_t1": "recent-window count triplet ratio hits autoq T1 threshold",
-    "ctx_recentk_frac_ctx_triplet_ratio_t1": "recent-window fraction triplet ratio hits autoq T1 threshold",
-    "ctx_recentk_count_ctx_triplet_ratio_t2": "recent-window count triplet ratio hits autoq T2 threshold",
-    "ctx_recentk_frac_ctx_triplet_ratio_t2": "recent-window fraction triplet ratio hits autoq T2 threshold",
-    "ctx_recentk_count_ctx_speed_diff_mean_t1": "recent-window count mean speed diff hits autoq T1 threshold",
-    "ctx_recentk_frac_ctx_speed_diff_mean_t1": "recent-window fraction mean speed diff hits autoq T1 threshold",
-    "ctx_recentk_count_ctx_speed_diff_mean_t2": "recent-window count mean speed diff hits autoq T2 threshold",
-    "ctx_recentk_frac_ctx_speed_diff_mean_t2": "recent-window fraction mean speed diff hits autoq T2 threshold",
-    "ctx_recentk_count_ctx_head_diff_mean_deg_t1": "recent-window count mean heading diff hits autoq T1 threshold",
-    "ctx_recentk_frac_ctx_head_diff_mean_deg_t1": "recent-window fraction mean heading diff hits autoq T1 threshold",
-    "ctx_recentk_count_ctx_head_diff_mean_deg_t2": "recent-window count mean heading diff hits autoq T2 threshold",
-    "ctx_recentk_frac_ctx_head_diff_mean_deg_t2": "recent-window fraction mean heading diff hits autoq T2 threshold",
+    "ctx_recentk_count_msg_catch_mgtsv_t1": "recent-window count MGTSV hits selected autoq T1 threshold",
+    "ctx_recentk_frac_msg_catch_mgtsv_t1": "recent-window fraction MGTSV hits selected autoq T1 threshold",
+    "ctx_recentk_count_msg_catch_mgtsv_t2": "recent-window count MGTSV hits selected autoq T2 threshold",
+    "ctx_recentk_frac_msg_catch_mgtsv_t2": "recent-window fraction MGTSV hits selected autoq T2 threshold",
+    "ctx_recentk_count_msg_catch_int_min_neighbor_t1": "recent-window count overlap min-neighbor hits selected autoq T1 threshold",
+    "ctx_recentk_frac_msg_catch_int_min_neighbor_t1": "recent-window fraction overlap min-neighbor hits selected autoq T1 threshold",
+    "ctx_recentk_count_msg_catch_int_min_neighbor_t2": "recent-window count overlap min-neighbor hits selected autoq T2 threshold",
+    "ctx_recentk_frac_msg_catch_int_min_neighbor_t2": "recent-window fraction overlap min-neighbor hits selected autoq T2 threshold",
+    "ctx_recentk_count_ctx_triplet_ratio_t1": "recent-window count triplet ratio hits selected autoq T1 threshold (often structural > 0)",
+    "ctx_recentk_frac_ctx_triplet_ratio_t1": "recent-window fraction triplet ratio hits selected autoq T1 threshold (often structural > 0)",
+    "ctx_recentk_count_ctx_triplet_ratio_t2": "recent-window count triplet ratio hits selected autoq T2 threshold",
+    "ctx_recentk_frac_ctx_triplet_ratio_t2": "recent-window fraction triplet ratio hits selected autoq T2 threshold",
+    "ctx_recentk_count_ctx_speed_diff_mean_t1": "recent-window count mean speed diff hits selected autoq T1 threshold",
+    "ctx_recentk_frac_ctx_speed_diff_mean_t1": "recent-window fraction mean speed diff hits selected autoq T1 threshold",
+    "ctx_recentk_count_ctx_speed_diff_mean_t2": "recent-window count mean speed diff hits selected autoq T2 threshold",
+    "ctx_recentk_frac_ctx_speed_diff_mean_t2": "recent-window fraction mean speed diff hits selected autoq T2 threshold",
+    "ctx_recentk_count_ctx_head_diff_mean_deg_t1": "recent-window count mean heading diff hits selected autoq T1 threshold",
+    "ctx_recentk_frac_ctx_head_diff_mean_deg_t1": "recent-window fraction mean heading diff hits selected autoq T1 threshold",
+    "ctx_recentk_count_ctx_head_diff_mean_deg_t2": "recent-window count mean heading diff hits selected autoq T2 threshold",
+    "ctx_recentk_frac_ctx_head_diff_mean_deg_t2": "recent-window fraction mean heading diff hits selected autoq T2 threshold",
 }
 
 
@@ -182,6 +183,49 @@ _TRAFFIC_GROUP_HINTS: Dict[str, str] = {
     "Sender recent: neighbor heading": (
         "Mean neighbor heading difference over recent sender messages; "
         "counts of very small angular diffs summarize repeated tight alignment with neighbors."
+    ),
+    "Sender recent history": (
+        "Other recent-window summaries over the sender's prior messages (time-capped and count-capped)."
+    ),
+}
+
+
+_REPLAY_GROUP_HINTS: Dict[str, str] = {
+    "History and timing": (
+        "These features indicate whether same-pseudonym history is available and whether recent timing "
+        "is consistent with expected message progression."
+    ),
+    "Plausibility checks": (
+        "Data replay attacks may inject stale but previously valid-looking states. "
+        "Look for repeated or temporally inconsistent motion/plausibility patterns, not just one weak anomaly."
+    ),
+    "Neighbor context": (
+        "Replay artifacts can break local consistency with live neighbors, especially when stale sender states "
+        "are compared against current surrounding traffic."
+    ),
+    "Sender recent: window": (
+        "How much sender-only history is available inside the recent window: message count and "
+        "time span (window is time-capped and count-capped)."
+    ),
+    "Sender recent: MGTSV": (
+        "Movement-gradient speed variation over the sender's prior messages in the window; "
+        "replay-like behavior may show repeated low-variation or threshold-hit patterns."
+    ),
+    "Sender recent: overlap": (
+        "Neighbor overlap plausibility over recent sender messages; "
+        "stale replay states may repeatedly conflict with current local occupancy."
+    ),
+    "Sender recent: triplets": (
+        "Similar-motion triplet ratio over recent sender messages; "
+        "replay can produce repeated structures that diverge from live dynamics."
+    ),
+    "Sender recent: neighbor speed": (
+        "Mean neighbor speed difference over recent sender messages; "
+        "stale replay trajectories can repeatedly mismatch current neighbor speeds."
+    ),
+    "Sender recent: neighbor heading": (
+        "Mean neighbor heading difference over recent sender messages; "
+        "replay trajectories can repeatedly mismatch current neighbor headings."
     ),
     "Sender recent history": (
         "Other recent-window summaries over the sender's prior messages (time-capped and count-capped)."
@@ -248,6 +292,27 @@ PROMPT_VARIANT_SPECS: Dict[str, PromptVariantSpec] = {
             "BSM features:",
         ),
         group_hints=_TRAFFIC_GROUP_HINTS,
+    ),
+    "replay_neutral_recentk": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled in a data replay scenario.",
+            "",
+            "Decision rule:",
+            "- Use the overall pattern across plausibility checks, short-history consistency, neighbor-context consistency, and sender recent-history summaries.",
+            "- Sender recent-history lines aggregate key signals over the sender's prior messages in a short time window (time-capped and count-capped).",
+            "- Data replay attacks may reuse stale states that looked plausible in the past but are inconsistent with the current scene.",
+            "- Do not rely on a single weak anomaly in isolation.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints=_REPLAY_GROUP_HINTS,
     ),
     "traffic_benign_prior": PromptVariantSpec(
         intro_lines=(

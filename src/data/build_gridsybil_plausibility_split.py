@@ -676,7 +676,7 @@ def write_split_parquets(
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Build train/val/test parquet splits for GridSybil plausibility message-level classification."
+        description="Build train/val/test parquet splits for plausibility message-level classification."
     )
     ap.add_argument(
         "--input-parquet",
@@ -698,7 +698,16 @@ def parse_args() -> argparse.Namespace:
         "--raw-glob",
         type=str,
         default="data/raw/GridSybil_*/*/traceJSON-*.json",
-        help="Glob to raw GridSybil trace files for sender vehicle_id -> attack_flag map.",
+        help="Glob to raw trace files for sender vehicle_id -> attack_flag map.",
+    )
+    ap.add_argument(
+        "--dataset-prefix",
+        type=str,
+        default="gridsybil_plausibility_message",
+        help=(
+            "Prefix used in dataset_meta schema_version. "
+            "Example: gridsybil_plausibility_message or datareplay_plausibility_message."
+        ),
     )
     ap.add_argument(
         "--attack-map-mode",
@@ -784,7 +793,7 @@ def main() -> None:
     t_main = time.perf_counter()
     if not args.quiet:
         _log(
-            "[start] build_gridsybil_plausibility_split "
+            "[start] build_plausibility_split "
             f"input={args.input_parquet} split={args.split_json} raw_glob={args.raw_glob}"
         )
         _log(
@@ -926,9 +935,9 @@ def main() -> None:
     args.dataset_meta.parent.mkdir(parents=True, exist_ok=True)
     meta = {
         "schema_version": (
-            "gridsybil_plausibility_message_split_v2_time_window"
+            f"{args.dataset_prefix}_split_v2_time_window"
             if split_mode == "time_window"
-            else "gridsybil_plausibility_message_split_v1"
+            else f"{args.dataset_prefix}_split_v1"
         ),
         "source_parquet": str(args.input_parquet).replace("\\", "/"),
         "split_json": str(args.split_json).replace("\\", "/"),

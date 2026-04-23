@@ -1,0 +1,17 @@
+{
+  "version": "datareplay_plausibility_messages_v2_time_windows",
+  "description": "Time-window split for DataReplay message-level plausibility (left-closed right-open intervals). train/val/test = 6000s/2400s/6000s across morning and afternoon runs.",
+  "window_semantics": "[start, end)",
+  "train_windows": [
+    { "start": 25200, "end": 28200 },
+    { "start": 50400, "end": 53400 }
+  ],
+  "val_windows": [
+    { "start": 28200, "end": 29400 },
+    { "start": 53400, "end": 54600 }
+  ],
+  "test_windows": [
+    { "start": 29400, "end": 32400 },
+    { "start": 54600, "end": 57600 }
+  ]
+}
