@@ -13,6 +13,7 @@ PROMPT_VARIANTS: Tuple[str, ...] = (
     "traffic_neutral",
     "traffic_neutral_recentk",
     "replay_neutral_recentk",
+    "dosdisruptive_classic_recentk",
     "traffic_benign_prior",
     "traffic_compact",
 )
@@ -233,6 +234,49 @@ _REPLAY_GROUP_HINTS: Dict[str, str] = {
 }
 
 
+_DOS_CLASSIC_GROUP_HINTS: Dict[str, str] = {
+    "History and timing": (
+        "DoS-disruptive sybil behavior may create short-lived identities. "
+        "These fields indicate whether same-pseudonym history exists and how quickly identities churn."
+    ),
+    "Plausibility checks": (
+        "Focus on repeated disruption patterns: high sending pressure, frequent overlap conflicts, "
+        "and unstable plausibility profiles across many short-lived senders."
+    ),
+    "Neighbor context": (
+        "DoS-disruptive bursts can distort local traffic consistency through abrupt density and "
+        "motion-heading mismatches around the receiver."
+    ),
+    "Sender recent: window": (
+        "How much sender-only history is available inside the recent window: message count and "
+        "time span (window is time-capped and count-capped)."
+    ),
+    "Sender recent: MGTSV": (
+        "Movement-gradient speed variation over the sender's prior messages in the window; "
+        "use threshold-hit counts as burst-level evidence rather than isolated spikes."
+    ),
+    "Sender recent: overlap": (
+        "Neighbor overlap plausibility over recent sender messages; "
+        "disruptive sybil bursts may repeatedly produce conflict-heavy overlap patterns."
+    ),
+    "Sender recent: triplets": (
+        "Similar-motion triplet ratio over recent sender messages; "
+        "joint one-shot identities may still leave repeated structural burst signatures."
+    ),
+    "Sender recent: neighbor speed": (
+        "Mean neighbor speed difference over recent sender messages; "
+        "disruptive bursts can cause repeated local speed inconsistency."
+    ),
+    "Sender recent: neighbor heading": (
+        "Mean neighbor heading difference over recent sender messages; "
+        "disruptive bursts can cause repeated local heading inconsistency."
+    ),
+    "Sender recent history": (
+        "Other recent-window summaries over the sender's prior messages (time-capped and count-capped)."
+    ),
+}
+
+
 PROMPT_VARIANT_SPECS: Dict[str, PromptVariantSpec] = {
     "default": PromptVariantSpec(
         intro_lines=(
@@ -313,6 +357,27 @@ PROMPT_VARIANT_SPECS: Dict[str, PromptVariantSpec] = {
             "BSM features:",
         ),
         group_hints=_REPLAY_GROUP_HINTS,
+    ),
+    "dosdisruptive_classic_recentk": PromptVariantSpec(
+        intro_lines=(
+            "You are an onboard CAV intrusion-detection model.",
+            "",
+            "Task:",
+            "Given receiver-visible features for one BSM, predict whether the sender is benign or attacker-controlled in a DoS-disruptive sybil scenario.",
+            "",
+            "Decision rule:",
+            "- Use the overall pattern across plausibility checks, short-history consistency, neighbor-context consistency, and sender recent-history summaries.",
+            "- Sender recent-history lines aggregate key signals over the sender's prior messages in a short time window (time-capped and count-capped).",
+            "- DoS-disruptive sybil attacks can appear as many short-lived identities with bursty message pressure and local inconsistency.",
+            "- Do not rely on a single weak anomaly in isolation.",
+            "",
+            "Output rules:",
+            "- Return ONLY one label token: benign or attack.",
+            "- Do not output explanations or extra text.",
+            "",
+            "BSM features:",
+        ),
+        group_hints=_DOS_CLASSIC_GROUP_HINTS,
     ),
     "traffic_benign_prior": PromptVariantSpec(
         intro_lines=(
