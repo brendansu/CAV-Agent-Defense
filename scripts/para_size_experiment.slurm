@@ -39,28 +39,12 @@ extract_job_id() {
 prev_job=""
 for item in "${EXPERIMENTS[@]}"; do
   IFS='|' read -r tag train_script eval_script exp_name <<< "$item"
-
-  [[ -f "$train_script" ]] || { echo "[ERROR] missing $train_script"; exit 2; }
-  [[ -f "$eval_script"  ]] || { echo "[ERROR] missing $eval_script"; exit 2; }
-
-  echo "==== $tag ===="
-
-  # 训练提交：若串行且有上一个任务，则依赖上一个 eval 成功后再开始
-  if [[ "$SERIAL" == "true" && -n "$prev_job" ]]; then
-    train_submit=$(sbatch --dependency=afterok:${prev_job} "$train_script")
-  else
-    train_submit=$(sbatch "$train_script")
-  fi
-  train_job=$(echo "$train_submit" | extract_job_id)
-  echo "train: $train_submit"
-
-  # 评估提交：依赖当前训练成功
+  train_submit=$(sbatch "$train_script")
+  train_job=$(echo "$train_submit" | awk '{print $4}')
+  echo "[$tag] train: $train_submit"
   eval_submit=$(sbatch --dependency=afterok:${train_job} --export=ALL,EXP_NAME=${exp_name} "$eval_script")
-  eval_job=$(echo "$eval_submit" | extract_job_id)
-  echo "eval : $eval_submit"
-
-  # 下一个实验若串行，依赖当前 eval
-  prev_job="$eval_job"
+  eval_job=$(echo "$eval_submit" | awk '{print $4}')
+  echo "[$tag] eval : $eval_submit (depends on train ${train_job})"
 done
 
 echo "All submissions done."
