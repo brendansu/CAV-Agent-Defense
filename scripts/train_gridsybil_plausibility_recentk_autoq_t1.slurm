@@ -1,18 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=veremi-train-datareplay-plausibility-recentk-autoq
+#SBATCH --job-name=veremi-gridsybil-plausibility-recentk-autoq-t1
 #SBATCH --partition=work1
-#SBATCH --time=03:00:00
+#SBATCH --time=3:00:00
 #SBATCH --mem=8gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
-#SBATCH --output=/scratch/%u/veremi_collusion/slurm/train_datareplay_plausibility_recentk_autoq/log_%j.out
-#SBATCH --error=/scratch/%u/veremi_collusion/slurm/train_datareplay_plausibility_recentk_autoq/log_%j.err
+#SBATCH --output=/scratch/%u/veremi_collusion/slurm/train_gridsybil_plausibility_recentk_autoq_t1/log_%j.out
+#SBATCH --error=/scratch/%u/veremi_collusion/slurm/train_gridsybil_plausibility_recentk_autoq_t1/log_%j.err
 
 set -euo pipefail
 export SLURM_EXPORT_ENV=ALL
 
 WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
-CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_datareplay_plausibility_recentk_autoq.yaml}"
+CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility_recentk_autoq_t1.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-}"
 PARQUET_DIR="${PARQUET_DIR:-}"
 TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-}"
@@ -44,6 +44,7 @@ if [[ -n "$TRAIN_OVERRIDES" ]]; then
   done
 fi
 
+
 if [[ -n "$OUTPUT_DIR" ]]; then
   srun python -m src.training.train_lora_qwen_gridsybil_plausibility \
     --config "$CONFIG" \
@@ -51,6 +52,6 @@ if [[ -n "$OUTPUT_DIR" ]]; then
     "${OVERRIDE_ARGS[@]}"
 else
   srun python -m src.training.train_lora_qwen_gridsybil_plausibility \
-    --config "$CONFIG" \
+    --config "$CONFIG"
     "${OVERRIDE_ARGS[@]}"
 fi

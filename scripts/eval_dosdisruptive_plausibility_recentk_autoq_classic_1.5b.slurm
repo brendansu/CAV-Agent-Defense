@@ -1,23 +1,23 @@
 #!/bin/bash
-#SBATCH --job-name=veremi-dosdisruptive-plausibility-eval-classic
+#SBATCH --job-name=veremi-dosdisruptive-plausibility-eval-classic-1.5b
 #SBATCH --partition=work1
 #SBATCH --time=01:00:00
 #SBATCH --mem=16gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --array=0-7
-#SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic/log_%A_%a.out
-#SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic/log_%A_%a.err
+#SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic_1.5b/log_%A_%a.out
+#SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic_1.5b/log_%A_%a.err
 
 set -euo pipefail
 export SLURM_EXPORT_ENV=ALL
 
 WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
-CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml}"
+CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_1.5b_dosdisruptive_plausibility_recentk_autoq_classic.yaml}"
 MODE="${MODE:-lora}"   # base / lora / both
-LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_collusion/outputs/qwen2.5-7b-dosdisruptive-plausibility-recentk-autoq-classic}"
+LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_collusion/outputs/qwen2.5-1.5b-dosdisruptive-plausibility-recentk-autoq-classic}"
 SPLIT="${SPLIT:-test}" # val / test
-EXP_NAME="${EXP_NAME:-dosdisruptive_autoq_classic}"
+EXP_NAME="${EXP_NAME:-dosdisruptive_autoq_classic_1.5b}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d)_${EXP_NAME}}"
 PARQUET_DIR="${PARQUET_DIR:-}"
 

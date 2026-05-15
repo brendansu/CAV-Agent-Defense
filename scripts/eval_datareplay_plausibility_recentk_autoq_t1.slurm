@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-datareplay-plausibility-eval
 #SBATCH --partition=work1
-#SBATCH --time=03:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=8gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
