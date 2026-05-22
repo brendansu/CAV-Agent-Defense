@@ -7,6 +7,8 @@ jupyter
 
 # Machine Learning / LLM
 scikit-learn
+xgboost
+lightgbm
 transformers
 datasets
 peft
