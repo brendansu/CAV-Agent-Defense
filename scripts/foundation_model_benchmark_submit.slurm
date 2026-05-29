@@ -86,24 +86,24 @@ submit_one() {
 
 submit_one "qwen2.5-7b" "gridsybil" \
   "qwen2.5_7b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
+  "scripts/train_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
+  "scripts/eval_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
   "foundation_qwen2.5_7b_gridsybil_recentk_autoq_t1" \
   "qwen2.5-7b-gridsybil-plausibility-recentk-autoq-t1" \
   "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
 
 submit_one "llama3.1-8b" "gridsybil" \
   "llama3.1_8b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
+  "scripts/train_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
+  "scripts/eval_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
   "foundation_llama3.1_8b_gridsybil_recentk_autoq_t1" \
   "llama3.1-8b-gridsybil-plausibility-recentk-autoq-t1" \
   "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
 
 submit_one "mistral-7b" "gridsybil" \
   "mistral_7b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
+  "scripts/train_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
+  "scripts/eval_gridsybil_plausibility_recentk_v2_50k_400pt.slurm" \
   "foundation_mistral_7b_gridsybil_recentk_autoq_t1" \
   "mistral-7b-gridsybil-plausibility-recentk-autoq-t1" \
   "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
