@@ -1,6 +1,6 @@
 model_name: Qwen/Qwen2.5-7B-Instruct
-parquet_dir: /scratch/YOUR_USERNAME/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k/
-output_dir: /scratch/YOUR_USERNAME/veremi_collusion/outputs/foundation/qwen2.5-7b-datareplay-plausibility-recentk-autoq
+parquet_dir: /scratch/haotias/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k/
+output_dir: /scratch/haotias/veremi_collusion/outputs/foundation/qwen2.5-7b-datareplay-plausibility-recentk-autoq
 
 max_seq_len: 2560
 reserve_answer_tokens: 16
