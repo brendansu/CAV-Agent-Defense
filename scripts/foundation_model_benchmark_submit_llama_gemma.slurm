@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=veremi-submit-foundation-benchmark
+#SBATCH --job-name=veremi-submit-llama-gemma-benchmark
 #SBATCH --partition=work1
 #SBATCH --time=00:30:00
 #SBATCH --mem=2gb
@@ -84,13 +84,7 @@ submit_one() {
   echo "         run_id=$run_id"
 }
 
-submit_one "qwen2.5-7b" "gridsybil" \
-  "qwen2.5_7b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "foundation_qwen2.5_7b_gridsybil_recentk_autoq_t1" \
-  "qwen2.5-7b-gridsybil-plausibility-recentk-autoq-t1" \
-  "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
+# --- Llama 3.1-8B ---
 
 submit_one "llama3.1-8b" "gridsybil" \
   "llama3.1_8b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
@@ -100,22 +94,6 @@ submit_one "llama3.1-8b" "gridsybil" \
   "llama3.1-8b-gridsybil-plausibility-recentk-autoq-t1" \
   "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
 
-submit_one "mistral-7b" "gridsybil" \
-  "mistral_7b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
-  "foundation_mistral_7b_gridsybil_recentk_autoq_t1" \
-  "mistral-7b-gridsybil-plausibility-recentk-autoq-t1" \
-  "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k"
-
-submit_one "qwen2.5-7b" "datareplay" \
-  "qwen2.5_7b_datareplay_plausibility_recentk_autoq.yaml" \
-  "scripts/train_datareplay_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
-  "foundation_qwen2.5_7b_datareplay_recentk_autoq" \
-  "qwen2.5-7b-datareplay-plausibility-recentk-autoq" \
-  "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k"
-
 submit_one "llama3.1-8b" "datareplay" \
   "llama3.1_8b_datareplay_plausibility_recentk_autoq.yaml" \
   "scripts/train_datareplay_plausibility_recentk_autoq_t1.slurm" \
@@ -123,22 +101,6 @@ submit_one "llama3.1-8b" "datareplay" \
   "foundation_llama3.1_8b_datareplay_recentk_autoq" \
   "llama3.1-8b-datareplay-plausibility-recentk-autoq" \
   "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k"
-
-submit_one "mistral-7b" "datareplay" \
-  "mistral_7b_datareplay_plausibility_recentk_autoq.yaml" \
-  "scripts/train_datareplay_plausibility_recentk_autoq_t1.slurm" \
-  "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
-  "foundation_mistral_7b_datareplay_recentk_autoq" \
-  "mistral-7b-datareplay-plausibility-recentk-autoq" \
-  "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k"
-
-submit_one "qwen2.5-7b" "dosdisruptive" \
-  "qwen2.5_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
-  "scripts/train_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
-  "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
-  "foundation_qwen2.5_7b_dosdisruptive_recentk_autoq_classic" \
-  "qwen2.5-7b-dosdisruptive-plausibility-recentk-autoq-classic" \
-  "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k"
 
 submit_one "llama3.1-8b" "dosdisruptive" \
   "llama3.1_8b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
@@ -148,13 +110,7 @@ submit_one "llama3.1-8b" "dosdisruptive" \
   "llama3.1-8b-dosdisruptive-plausibility-recentk-autoq-classic" \
   "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k"
 
-submit_one "mistral-7b" "dosdisruptive" \
-  "mistral_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
-  "scripts/train_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
-  "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
-  "foundation_mistral_7b_dosdisruptive_recentk_autoq_classic" \
-  "mistral-7b-dosdisruptive-plausibility-recentk-autoq-classic" \
-  "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k"
+# --- Gemma 2-9B ---
 
 submit_one "gemma2-9b" "gridsybil" \
   "gemma2_9b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
@@ -180,4 +136,4 @@ submit_one "gemma2-9b" "dosdisruptive" \
   "gemma2-9b-dosdisruptive-plausibility-recentk-autoq-classic" \
   "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k"
 
-echo "[done] all foundation model benchmark jobs submitted."
+echo "[done] llama3.1-8b and gemma2-9b benchmark jobs submitted (6 train + 6 eval)."

@@ -1,12 +1,12 @@
-model_name: mistralai/Mistral-7B-Instruct-v0.3
-parquet_dir: /scratch/haotias/veremi_collusion/data/gridsybil_plausibility_senderk_50k
-output_dir: /scratch/haotias/veremi_collusion/outputs/foundation/mistral-7b-gridsybil-plausibility-recentk-autoq-t1
+model_name: google/gemma-2-9b-it
+parquet_dir: /scratch/haotias/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k/
+output_dir: /scratch/haotias/veremi_collusion/outputs/foundation/gemma2-9b-dosdisruptive-plausibility-recentk-autoq-classic
 
 max_seq_len: 2560
 reserve_answer_tokens: 16
 simulate_budget_cutoff: true
 add_eos_token: true
-prompt_variant: traffic_neutral_recentk
+prompt_variant: dosdisruptive_classic_recentk
 feature_name_style: descriptive
 
 prompt_exclude_columns:
@@ -64,18 +64,22 @@ prompt_include_columns:
   - ctx_recentk_frac_msg_catch_mgtsv_t1
   - ctx_recentk_count_msg_catch_int_min_neighbor_t1
   - ctx_recentk_frac_msg_catch_int_min_neighbor_t1
+  - ctx_recentk_count_msg_catch_int_min_neighbor_t2
+  - ctx_recentk_frac_msg_catch_int_min_neighbor_t2
   - ctx_recentk_count_ctx_triplet_ratio_t1
   - ctx_recentk_frac_ctx_triplet_ratio_t1
   - ctx_recentk_count_ctx_speed_diff_mean_t1
   - ctx_recentk_frac_ctx_speed_diff_mean_t1
+  - ctx_recentk_count_ctx_speed_diff_mean_t2
+  - ctx_recentk_frac_ctx_speed_diff_mean_t2
   - ctx_recentk_count_ctx_head_diff_mean_deg_t1
   - ctx_recentk_frac_ctx_head_diff_mean_deg_t1
   - ctx_recentk_count_ctx_triplet_ratio_gt_0
   - ctx_recentk_frac_ctx_triplet_ratio_gt_0
 
 max_train_rows: 50000
-max_val_rows: 5000
-max_test_rows: 5000
+max_val_rows: 20000
+max_test_rows: 50000
 subsample_seed: 42
 
 attack_sample_weight: 1.0
@@ -90,9 +94,9 @@ target_modules:
   - v_proj
   - o_proj
 
-per_device_train_batch_size: 2
-per_device_eval_batch_size: 2
-gradient_accumulation_steps: 8
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 16
 num_train_epochs: 1.0
 max_steps: 400
 learning_rate: 1.0e-4
@@ -105,5 +109,5 @@ eval_steps: 200
 save_strategy: steps
 save_steps: 200
 save_total_limit: 2
-max_eval_samples: 1000
+max_eval_samples: 2000
 report_to: []
