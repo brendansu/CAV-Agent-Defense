@@ -114,7 +114,7 @@ submit_one "llama3.1-8b" "dosdisruptive" \
 
 submit_one "gemma2-9b" "gridsybil" \
   "gemma2_9b_gridsybil_plausibility_recentk_autoq_t1.yaml" \
-  "scripts/train_gridsybil_plausibility_recentk_autoq_t1.slurm" \
+  "scripts/train_gridsybil_plausibility_recentk_autoq_t1_gemma.slurm" \
   "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
   "foundation_gemma2_9b_gridsybil_recentk_autoq_t1" \
   "gemma2-9b-gridsybil-plausibility-recentk-autoq-t1" \
@@ -122,7 +122,7 @@ submit_one "gemma2-9b" "gridsybil" \
 
 submit_one "gemma2-9b" "datareplay" \
   "gemma2_9b_datareplay_plausibility_recentk_autoq.yaml" \
-  "scripts/train_datareplay_plausibility_recentk_autoq_t1.slurm" \
+  "scripts/train_datareplay_plausibility_recentk_autoq_t1_gemma.slurm" \
   "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
   "foundation_gemma2_9b_datareplay_recentk_autoq" \
   "gemma2-9b-datareplay-plausibility-recentk-autoq" \
@@ -130,7 +130,7 @@ submit_one "gemma2-9b" "datareplay" \
 
 submit_one "gemma2-9b" "dosdisruptive" \
   "gemma2_9b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
-  "scripts/train_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
+  "scripts/train_dosdisruptive_plausibility_recentk_autoq_classic_gemma.slurm" \
   "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
   "foundation_gemma2_9b_dosdisruptive_recentk_autoq_classic" \
   "gemma2-9b-dosdisruptive-plausibility-recentk-autoq-classic" \
