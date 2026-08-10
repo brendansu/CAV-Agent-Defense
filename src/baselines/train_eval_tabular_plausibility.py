@@ -52,6 +52,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output_json", type=Path, default=None, help="Optional output JSON path.")
     parser.add_argument("--run_id", type=str, default="")
+    parser.add_argument(
+        "--parquet_dir",
+        type=Path,
+        default=None,
+        help="Optional override for parquet_dir from config (e.g. seed-specific sampled datasets).",
+    )
     return parser.parse_args()
 
 
@@ -89,7 +95,9 @@ def load_config(path: Path) -> Dict[str, Any]:
     return cfg
 
 
-def resolve_parquet_dir(cfg: Dict[str, Any], config_path: Path) -> Path:
+def resolve_parquet_dir(cfg: Dict[str, Any], config_path: Path, override: Path | None = None) -> Path:
+    if override is not None:
+        return override
     raw = str(cfg.get("parquet_dir", "")).strip()
     if not raw:
         raise ValueError("Missing parquet_dir in config.")
@@ -261,7 +269,7 @@ def evaluate_model(model: Any, x_eval: np.ndarray, y_eval: np.ndarray) -> Dict[s
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
-    parquet_dir = resolve_parquet_dir(cfg, args.config)
+    parquet_dir = resolve_parquet_dir(cfg, args.config, override=args.parquet_dir)
     feature_cols = list(cfg.get("prompt_include_columns", []) or [])
     if not feature_cols:
         raise ValueError("prompt_include_columns is empty in config; cannot build tabular baseline.")

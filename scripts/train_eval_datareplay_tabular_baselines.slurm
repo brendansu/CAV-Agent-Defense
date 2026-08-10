@@ -16,6 +16,7 @@ MODEL="${MODEL:-both}"            # lr / gnb / rf / xgb / lgbm / mlp / svm / bot
 EVAL_SPLIT="${EVAL_SPLIT:-test}"  # val / test
 RUN_ID="${RUN_ID:-$(date +%Y%m%d)_datareplay_tabular_baselines}"
 OUTPUT_JSON="${OUTPUT_JSON:-/scratch/$USER/veremi_collusion/outputs/tabular_baselines/${RUN_ID}.json}"
+PARQUET_DIR="${PARQUET_DIR:-}"    # optional override, e.g. seed-specific sampled datasets
 
 module load anaconda3/2023.09-0
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -29,10 +30,18 @@ echo "MODEL=$MODEL"
 echo "EVAL_SPLIT=$EVAL_SPLIT"
 echo "RUN_ID=$RUN_ID"
 echo "OUTPUT_JSON=$OUTPUT_JSON"
+echo "PARQUET_DIR=$PARQUET_DIR"
 
-srun python -m src.baselines.train_eval_tabular_plausibility \
-  --config "$CONFIG" \
-  --model "$MODEL" \
-  --eval_split "$EVAL_SPLIT" \
-  --run_id "$RUN_ID" \
+CMD=(
+  python -m src.baselines.train_eval_tabular_plausibility
+  --config "$CONFIG"
+  --model "$MODEL"
+  --eval_split "$EVAL_SPLIT"
+  --run_id "$RUN_ID"
   --output_json "$OUTPUT_JSON"
+)
+if [[ -n "$PARQUET_DIR" ]]; then
+  CMD+=(--parquet_dir "$PARQUET_DIR")
+fi
+
+srun "${CMD[@]}"
