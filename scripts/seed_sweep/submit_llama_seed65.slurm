@@ -98,7 +98,7 @@ submit_one "llama3.1-8b" "gridsybil" \
   "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
   "foundation_llama3.1_8b_gridsybil_recentk_autoq_t1_seed65" \
   "llama3.1-8b-gridsybil-plausibility-recentk-autoq-t1-seed65" \
-  "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k-seed65"
+  "/scratch/$USER/veremi_collusion/data/plausibility_messages_senderk_autoq_mid_v2_split_sampled_50k_20k_50k_seed65"
 
 submit_one "llama3.1-8b" "datareplay" \
   "llama3.1_8b_datareplay_plausibility_recentk_autoq.yaml" \
@@ -106,7 +106,7 @@ submit_one "llama3.1-8b" "datareplay" \
   "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
   "foundation_llama3.1_8b_datareplay_recentk_autoq_seed65" \
   "llama3.1-8b-datareplay-plausibility-recentk-autoq-seed65" \
-  "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k-seed65"
+  "/scratch/$USER/veremi_collusion/data/datareplay_messages_senderk_autoq_t1_split_sampled_50k_20k_50k_seed65"
 
 submit_one "llama3.1-8b" "dosdisruptive" \
   "llama3.1_8b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
@@ -114,6 +114,6 @@ submit_one "llama3.1-8b" "dosdisruptive" \
   "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
   "foundation_llama3.1_8b_dosdisruptive_recentk_autoq_classic_seed65" \
   "llama3.1-8b-dosdisruptive-plausibility-recentk-autoq-classic-seed65" \
-  "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k-seed65"
+  "/scratch/$USER/veremi_collusion/data/dosdisruptive_senderk_autoq_classic_split_sampled_50k_20k_50k_seed65"
 
 echo "[done] llama seed=65 benchmark jobs submitted."

@@ -98,7 +98,7 @@ submit_one "mistral-7b" "gridsybil" \
   "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
   "foundation_mistral_7b_gridsybil_recentk_autoq_t1_seed18" \
   "mistral-7b-gridsybil-plausibility-recentk-autoq-t1-seed18" \
-  "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k-seed18"
+  "/scratch/$USER/veremi_collusion/data/plausibility_messages_senderk_autoq_mid_v2_split_sampled_50k_20k_50k_seed18"
 
 submit_one "mistral-7b" "datareplay" \
   "mistral_7b_datareplay_plausibility_recentk_autoq.yaml" \
@@ -106,7 +106,7 @@ submit_one "mistral-7b" "datareplay" \
   "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
   "foundation_mistral_7b_datareplay_recentk_autoq_seed18" \
   "mistral-7b-datareplay-plausibility-recentk-autoq-seed18" \
-  "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k-seed18"
+  "/scratch/$USER/veremi_collusion/data/datareplay_messages_senderk_autoq_t1_split_sampled_50k_20k_50k_seed18"
 
 submit_one "mistral-7b" "dosdisruptive" \
   "mistral_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
@@ -114,6 +114,6 @@ submit_one "mistral-7b" "dosdisruptive" \
   "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
   "foundation_mistral_7b_dosdisruptive_recentk_autoq_classic_seed18" \
   "mistral-7b-dosdisruptive-plausibility-recentk-autoq-classic-seed18" \
-  "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k-seed18"
+  "/scratch/$USER/veremi_collusion/data/dosdisruptive_senderk_autoq_classic_split_sampled_50k_20k_50k_seed18"
 
 echo "[done] mistral seed=18 benchmark jobs submitted."

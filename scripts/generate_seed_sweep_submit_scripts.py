@@ -52,11 +52,14 @@ OUT_DIR = REPO_ROOT / "scripts" / "seed_sweep"
 
 ATTACKS = ["gridsybil", "datareplay", "dosdisruptive"]
 
-# Base (seed=42) parquet dirs on HPC scratch, shared across all LLM models for a given attack.
-PARQUET_DIR_BASE = {
-    "gridsybil": "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k",
-    "datareplay": "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k",
-    "dosdisruptive": "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k",
+# Seed-specific parquet dirs on HPC scratch, shared across all LLM models for a given
+# attack. These mirror the local sampled-dataset basenames verbatim (that's what actually
+# got uploaded -- see scripts/upload_seed_sweep_datasets_to_hpc.sh), NOT the shorter
+# seed=42-style names used by the checked-in YAML configs' default parquet_dir.
+PARQUET_DIR_TEMPLATE = {
+    "gridsybil": "/scratch/$USER/veremi_collusion/data/plausibility_messages_senderk_autoq_mid_v2_split_sampled_50k_20k_50k_seed{seed}",
+    "datareplay": "/scratch/$USER/veremi_collusion/data/datareplay_messages_senderk_autoq_t1_split_sampled_50k_20k_50k_seed{seed}",
+    "dosdisruptive": "/scratch/$USER/veremi_collusion/data/dosdisruptive_senderk_autoq_classic_split_sampled_50k_20k_50k_seed{seed}",
 }
 
 EVAL_SCRIPT = {
@@ -173,7 +176,7 @@ def render_llm_script(model_key: str, seed: int) -> str:
         eval_script = EVAL_SCRIPT[attack]
         exp_name = f"foundation_{config_underscore}_{EXP_NAME_SUFFIX[attack]}_seed{seed}"
         output_name = f"{output_hyphen}-{OUTPUT_NAME_SUFFIX[attack]}-seed{seed}"
-        parquet_dir = f"{PARQUET_DIR_BASE[attack]}-seed{seed}"
+        parquet_dir = PARQUET_DIR_TEMPLATE[attack].format(seed=seed)
         calls.append(
             f'submit_one "{label}" "{attack}" \\\n'
             f'  "{config_name}" \\\n'
@@ -262,9 +265,9 @@ CONFIG_DATAREPLAY="${{CONFIG_DATAREPLAY:-$HOME/veremi_collusion_local/qwen2.5_7b
 CONFIG_DOS="${{CONFIG_DOS:-$HOME/veremi_collusion_local/qwen2.5_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml}}"
 CONFIG_GRIDSYBIL="${{CONFIG_GRIDSYBIL:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility_recentk_autoq_t1.yaml}}"
 
-PARQUET_DIR_DATAREPLAY="{PARQUET_DIR_BASE['datareplay']}-seed{seed}"
-PARQUET_DIR_DOS="{PARQUET_DIR_BASE['dosdisruptive']}-seed{seed}"
-PARQUET_DIR_GRIDSYBIL="{PARQUET_DIR_BASE['gridsybil']}-seed{seed}"
+PARQUET_DIR_DATAREPLAY="{PARQUET_DIR_TEMPLATE['datareplay'].format(seed=seed)}"
+PARQUET_DIR_DOS="{PARQUET_DIR_TEMPLATE['dosdisruptive'].format(seed=seed)}"
+PARQUET_DIR_GRIDSYBIL="{PARQUET_DIR_TEMPLATE['gridsybil'].format(seed=seed)}"
 
 if [[ ! -f "$BASELINE_JOB_SCRIPT" ]]; then
   echo "[ERROR] BASELINE_JOB_SCRIPT not found: $BASELINE_JOB_SCRIPT" >&2

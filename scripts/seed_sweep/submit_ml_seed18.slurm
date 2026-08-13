@@ -29,9 +29,9 @@ CONFIG_DATAREPLAY="${CONFIG_DATAREPLAY:-$HOME/veremi_collusion_local/qwen2.5_7b_
 CONFIG_DOS="${CONFIG_DOS:-$HOME/veremi_collusion_local/qwen2.5_7b_dosdisruptive_plausibility_recentk_autoq_classic.yaml}"
 CONFIG_GRIDSYBIL="${CONFIG_GRIDSYBIL:-$HOME/veremi_collusion_local/qwen2.5_7b_gridsybil_plausibility_recentk_autoq_t1.yaml}"
 
-PARQUET_DIR_DATAREPLAY="/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k-seed18"
-PARQUET_DIR_DOS="/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k-seed18"
-PARQUET_DIR_GRIDSYBIL="/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k-seed18"
+PARQUET_DIR_DATAREPLAY="/scratch/$USER/veremi_collusion/data/datareplay_messages_senderk_autoq_t1_split_sampled_50k_20k_50k_seed18"
+PARQUET_DIR_DOS="/scratch/$USER/veremi_collusion/data/dosdisruptive_senderk_autoq_classic_split_sampled_50k_20k_50k_seed18"
+PARQUET_DIR_GRIDSYBIL="/scratch/$USER/veremi_collusion/data/plausibility_messages_senderk_autoq_mid_v2_split_sampled_50k_20k_50k_seed18"
 
 if [[ ! -f "$BASELINE_JOB_SCRIPT" ]]; then
   echo "[ERROR] BASELINE_JOB_SCRIPT not found: $BASELINE_JOB_SCRIPT" >&2

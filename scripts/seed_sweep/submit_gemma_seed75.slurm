@@ -98,7 +98,7 @@ submit_one "gemma2-9b" "gridsybil" \
   "scripts/eval_gridsybil_plausibility_recentk_autoq_t1.slurm" \
   "foundation_gemma2_9b_gridsybil_recentk_autoq_t1_seed75" \
   "gemma2-9b-gridsybil-plausibility-recentk-autoq-t1-seed75" \
-  "/scratch/$USER/veremi_collusion/data/gridsybil_plausibility_senderk_50k-seed75"
+  "/scratch/$USER/veremi_collusion/data/plausibility_messages_senderk_autoq_mid_v2_split_sampled_50k_20k_50k_seed75"
 
 submit_one "gemma2-9b" "datareplay" \
   "gemma2_9b_datareplay_plausibility_recentk_autoq.yaml" \
@@ -106,7 +106,7 @@ submit_one "gemma2-9b" "datareplay" \
   "scripts/eval_datareplay_plausibility_recentk_autoq_t1.slurm" \
   "foundation_gemma2_9b_datareplay_recentk_autoq_seed75" \
   "gemma2-9b-datareplay-plausibility-recentk-autoq-seed75" \
-  "/scratch/$USER/veremi_collusion/data/datareplay_plausibility_senderk_autoq_50k-seed75"
+  "/scratch/$USER/veremi_collusion/data/datareplay_messages_senderk_autoq_t1_split_sampled_50k_20k_50k_seed75"
 
 submit_one "gemma2-9b" "dosdisruptive" \
   "gemma2_9b_dosdisruptive_plausibility_recentk_autoq_classic.yaml" \
@@ -114,6 +114,6 @@ submit_one "gemma2-9b" "dosdisruptive" \
   "scripts/eval_dosdisruptive_plausibility_recentk_autoq_classic.slurm" \
   "foundation_gemma2_9b_dosdisruptive_recentk_autoq_classic_seed75" \
   "gemma2-9b-dosdisruptive-plausibility-recentk-autoq-classic-seed75" \
-  "/scratch/$USER/veremi_collusion/data/dosdisruptive_plausibility_senderk_autoq_classic_50k-seed75"
+  "/scratch/$USER/veremi_collusion/data/dosdisruptive_senderk_autoq_classic_split_sampled_50k_20k_50k_seed75"
 
 echo "[done] gemma seed=75 benchmark jobs submitted."
