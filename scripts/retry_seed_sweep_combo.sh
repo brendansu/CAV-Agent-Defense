@@ -86,6 +86,18 @@ for f in "$CONFIG_PATH" "$TRAIN_SCRIPT" "$EVAL_SCRIPT"; do
   fi
 done
 
+# trainer.save_model() only runs after trainer.train() returns without raising, and writes
+# the final adapter directly into OUTPUT_DIR (not into a checkpoint-XXX/ subfolder) -- so its
+# presence is a reliable "this combo already trained successfully" signal. Skip by default so
+# reruns of this script (or a loop over many seeds) don't blindly overwrite a good result;
+# pass FORCE=1 to retrain anyway.
+FORCE="${FORCE:-0}"
+if [[ "$FORCE" -ne 1 ]] && { [[ -f "$OUTPUT_DIR/adapter_model.safetensors" ]] || [[ -f "$OUTPUT_DIR/adapter_model.bin" ]]; }; then
+  echo "[skip] $LABEL $ATTACK seed=$SEED already has a saved adapter at $OUTPUT_DIR"
+  echo "       (set FORCE=1 to retrain anyway, e.g. FORCE=1 $0 $MODEL $ATTACK $SEED)"
+  exit 0
+fi
+
 cd "$WORK_DIR"
 
 echo "[retry] model=$LABEL attack=$ATTACK seed=$SEED"
