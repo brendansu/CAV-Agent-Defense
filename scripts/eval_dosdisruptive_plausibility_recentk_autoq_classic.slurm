@@ -6,6 +6,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --array=0-7
+#SBATCH --requeue
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic/log_%A_%a.out
 #SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_dosdisruptive_plausibility_recentk_autoq_classic/log_%A_%a.err
 

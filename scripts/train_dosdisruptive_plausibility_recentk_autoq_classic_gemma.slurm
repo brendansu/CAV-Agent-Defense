@@ -5,6 +5,7 @@
 #SBATCH --mem=16gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
+#SBATCH --requeue
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/train_dosdisruptive_plausibility_recentk_autoq_classic/log_%j.out
 #SBATCH --error=/scratch/%u/veremi_collusion/slurm/train_dosdisruptive_plausibility_recentk_autoq_classic/log_%j.err
 

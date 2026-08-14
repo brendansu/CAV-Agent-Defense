@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-train-datareplay-plausibility-recentk-autoq
 #SBATCH --partition=work1
-#SBATCH --time=03:00:00
-#SBATCH --mem=8gb
+#SBATCH --time=05:00:00
+#SBATCH --mem=24gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
+#SBATCH --requeue
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/train_datareplay_plausibility_recentk_autoq/log_%j.out
 #SBATCH --error=/scratch/%u/veremi_collusion/slurm/train_datareplay_plausibility_recentk_autoq/log_%j.err
 

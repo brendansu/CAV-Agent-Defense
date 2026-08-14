@@ -2,10 +2,11 @@
 #SBATCH --job-name=veremi-datareplay-plausibility-eval
 #SBATCH --partition=work1
 #SBATCH --time=01:00:00
-#SBATCH --mem=8gb
+#SBATCH --mem=24gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --array=0-7
+#SBATCH --requeue
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_datareplay_plausibility_recentk_autoq/log_%A_%a.out
 #SBATCH --error=/scratch/%u/veremi_collusion/slurm/eval_datareplay_plausibility_recentk_autoq/log_%A_%a.err
 

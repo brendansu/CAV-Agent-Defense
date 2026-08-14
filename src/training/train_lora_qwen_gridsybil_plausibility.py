@@ -332,6 +332,7 @@ def build_training_arguments(
 
     return TrainingArguments(
         output_dir=output_dir,
+        overwrite_output_dir=True,
         per_device_train_batch_size=per_device_train_batch_size,
         per_device_eval_batch_size=int(config.get("per_device_eval_batch_size", 1)),
         gradient_accumulation_steps=gradient_accumulation_steps,
