@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-gridsybil-plausibility-50k-4gpu
 #SBATCH --partition=work1
-#SBATCH --time=2:00:00
+#SBATCH --time=10:00:00
 #SBATCH --mem=80gb
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=a100:4

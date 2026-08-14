@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-eval-plausibility-50k-base
 #SBATCH --partition=work1
-#SBATCH --time=02:00:00
-#SBATCH --mem=8gb
-#SBATCH --cpus-per-task=1
+#SBATCH --time=10:00:00
+#SBATCH --mem=32gb
+#SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --array=0-7
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/eval_plausibility_base_50k/log_%A_%a.out
