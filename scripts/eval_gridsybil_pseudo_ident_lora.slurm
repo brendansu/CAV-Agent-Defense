@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-eval-gridsybil
 #SBATCH --partition=work1
-#SBATCH --time=08:00:00
+#SBATCH --time=10:00:00
 #SBATCH --mem=32gb
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-node=a100:1
@@ -18,10 +18,10 @@
 #   sbatch --export=ALL,SPLIT=test,MODEL_TAG=base,RUN_ID=$RUN_ID scripts/eval_gridsybil_pseudo_ident_lora.slurm
 #   sbatch --export=ALL,SPLIT=test,MODEL_TAG=lora,RUN_ID=$RUN_ID scripts/eval_gridsybil_pseudo_ident_lora.slurm
 
-CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc.yaml}"
+CONFIG="${CONFIG:-$HOME/veremi_collusion_local/qwen2.5_1.5b_gridsybil_pseudo_ident_hpc_2ep.yaml}"
 SPLIT="${SPLIT:-test}"                 # val / test
 MODEL_TAG="${MODEL_TAG:-lora}"         # base / lora
-LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a}"
+LORA_DIR="${LORA_DIR:-/scratch/$USER/veremi_collusion/outputs/qwen2.5-1.5b-pseudo-ident-balanced-a-2ep}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 
 NUM_SHARDS=8

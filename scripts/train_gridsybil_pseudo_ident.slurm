@@ -6,7 +6,6 @@
 #SBATCH --cpus-per-task=32
 
 # 如果你们集群要求写成 a100:4 这种形式，把下面这一行替换为：
-# #SBATCH --gpus-per-node=a100:4
 #SBATCH --gpus-per-node=a100:4
 
 #SBATCH --output=/scratch/%u/veremi_collusion/slurm/train_gridsybil_%x-%j.out

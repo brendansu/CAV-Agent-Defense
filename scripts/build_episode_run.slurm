@@ -30,7 +30,7 @@ export SLURM_EXPORT_ENV=ALL
 
 RUN_DIR="${RUN_DIR:-}"
 WORK_DIR="${WORK_DIR:-$HOME/veremi_collusion}"
-OUT_DIR="${OUT_DIR:-data/processed/episodes_gridsybil_v2}"
+OUT_DIR="${OUT_DIR:-data/processed/episodes_gridsybil_pseudo_identity_v1}"
 WINDOW_SEC="${WINDOW_SEC:-10}"
 STEP_SEC="${STEP_SEC:-5}"
 PRECISION="${PRECISION:-2}"
