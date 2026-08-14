@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=veremi-train-dosdisruptive-plausibility-recentk-autoq-classic-gemma
 #SBATCH --partition=work1
-#SBATCH --time=05:00:00
+#SBATCH --time=09:00:00
 #SBATCH --mem=16gb
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus-per-node=a100:1
